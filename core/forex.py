@@ -21,8 +21,9 @@ if str(OPEN_API_DIR) not in sys.path:
     sys.path.insert(0, str(OPEN_API_DIR))
 
 try:
-    from meritz import client, load_catalog, MeritzError
+    from meritz import client, load_catalog, MeritzError  # type: ignore
 except ImportError:
+
     client = None
     load_catalog = None
     MeritzError = Exception

@@ -1,8 +1,8 @@
 version: '3.8'
 
 services:
-  meritz-dashboard:
-    image: simji3/meritz-autotrade:latest
+  dashboard:
+    image: simji3/meritz-dashboard:latest
     container_name: meritz-dashboard
     command: >
       streamlit run dashboard.py
@@ -12,7 +12,7 @@ services:
       --server.enableXsrfProtection=false
       --browser.gatherUsageStats=false
     ports:
-      - "8506:8501"  # kiwoom(8505)과 포트 충돌 방지
+      - "8504:8501"  # kiwoom(8505) 등 타 서비스와 포트 충돌 방지
     volumes:
       - /home/snaredrum/meritz/data:/app/data
       - /home/snaredrum/meritz/logs:/app/logs
@@ -22,8 +22,8 @@ services:
       - TZ=Asia/Seoul
       - PYTHONUNBUFFERED=1
 
-  meritz-scheduler:
-    image: simji3/meritz-autotrade:latest
+  scheduler:
+    image: simji3/meritz-scheduler:latest
     container_name: meritz-scheduler
     command: python core/scheduler.py
     volumes:
@@ -32,7 +32,8 @@ services:
       - /home/snaredrum/meritz/env:/app/env
     restart: unless-stopped
     depends_on:
-      - meritz-dashboard
+      - dashboard
+
     environment:
       - TZ=Asia/Seoul
       - PYTHONUNBUFFERED=1

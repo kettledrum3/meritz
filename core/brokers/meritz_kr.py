@@ -11,9 +11,10 @@ if str(OPEN_API_DIR) not in sys.path:
     sys.path.insert(0, str(OPEN_API_DIR))
 
 try:
-    from meritz import client, load_catalog, MeritzError
-    from meritz.core import safety
+    from meritz import client, load_catalog, MeritzError  # type: ignore
+    from meritz.core import safety  # type: ignore
 except ImportError:
+
     # 패키지 설치 전 대비용
     client = None
     load_catalog = None
