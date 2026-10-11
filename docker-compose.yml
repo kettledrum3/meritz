@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  meritz-dashboard:
+    image: simji3/meritz-autotrade:latest
+    container_name: meritz-dashboard
+    command: >
+      streamlit run dashboard.py
+      --server.port=8501
+      --server.address=0.0.0.0
+      --server.enableCORS=false
+      --server.enableXsrfProtection=false
+      --browser.gatherUsageStats=false
+    ports:
+      - "8506:8501"  # kiwoom(8505)과 포트 충돌 방지
+    volumes:
+      - /home/snaredrum/meritz/data:/app/data
+      - /home/snaredrum/meritz/logs:/app/logs
+      - /home/snaredrum/meritz/env:/app/env
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1
+
+  meritz-scheduler:
+    image: simji3/meritz-autotrade:latest
+    container_name: meritz-scheduler
+    command: python core/scheduler.py
+    volumes:
+      - /home/snaredrum/meritz/data:/app/data
+      - /home/snaredrum/meritz/logs:/app/logs
+      - /home/snaredrum/meritz/env:/app/env
+    restart: unless-stopped
+    depends_on:
+      - meritz-dashboard
+    environment:
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1
+
+# Nginx Proxy Manager와 동일한 네트워크 사용
+networks:
+  default:
+    external: true
+    name: nginx-proxy

@@ -1,0 +1,30 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.venv
+venv
+ENV
+
+# Secrets & Environment (Portainer 볼륨으로 마운트됨)
+env/.env*
+.env*
+*.env
+!.env.example
+
+# Runtime Data & Logs (Portainer 볼륨으로 마운트됨)
+data/*.db
+data/*.sqlite3
+logs/*
+*.log
+
+# IDE & OS
+.idea
+.vscode
+.DS_Store
+Thumbs.db

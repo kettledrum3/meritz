@@ -1,0 +1,82 @@
+oauth2_revoke | /oauth2/revoke | 접근토큰 폐기
+oauth2_token | /oauth2/token | 접근토큰 발급
+ref_market_days | /reference/v1/market-days | 국내 영업일 조회
+ref_market_hours | /reference/v1/market-hours | 국내 장운영 조회
+market_candles_days | /market/v1/candles/days | 시세추이 조회(일봉)
+market_candles_minutes | /market/v1/candles/minutes | 시세추이 조회(분봉)
+market_investors | /market/v1/investors | 종목별 투자자매매동향
+market_investors_detail | /market/v1/investors/detail | 국내주식 종목별 투자자매매동향 상세
+market_orderbook | /market/v1/orderbook | 호가 조회
+market_orderbook_after | /market/v1/orderbook/after | 시간외 단일가 호가 조회
+market_prices | /market/v1/prices | 현재가 조회
+market_prices_after | /market/v1/prices/after | 시간외 단일가 조회
+market_trades_minutes | /market/v1/trades/minutes | 체결추이 조회(분)
+market_trades_ticks | /market/v1/trades/ticks | 체결추이 조회(틱)
+credit_orders_buy | /trading/v1/credit-orders/buy | 신용매수 주문
+orders_buy | /trading/v1/orders/buy | 일반주문 매수
+credit_orders_sell | /trading/v1/credit-orders/sell | 신용매도 주문
+orders_sell | /trading/v1/orders/sell | 일반주문 매도
+orders_modify | /trading/v1/orders/modify | 국내주식 주문 정정
+orders_cancel | /trading/v1/orders/cancel | 국내주식 주문 취소
+reserved_orders | /trading/v1/reserved-orders | 국내주식 예약주문 조회
+reserved_orders_buy | /trading/v1/reserved-orders/buy | 국내주식 예약주문 매수
+reserved_orders_sell | /trading/v1/reserved-orders/sell | 국내주식 예약주문 매도
+reserved_orders_cancel | /trading/v1/reserved-orders/cancel | 국내주식 예약주문 취소
+orders_estimate | /trading/v1/orders/estimate | 주문가능금액·수량 조회
+orders_history | /trading/v1/orders/history | 주문내역 조회
+profit_loss | /accounts/v1/me/profit-loss | 국내주식 실현손익 (일자별)
+profit_loss_symbols | /accounts/v1/me/profit-loss/symbols | 국내주식 실현손익 (종목별)
+profit_loss_summary | /accounts/v1/me/profit-loss/summary | 국내주식 실현손익 (합계)
+market_index_candles_days | /market/v1/index/candles/days | 국내지수 시세추이 조회
+market_index_candles_minutes | /market/v1/index/candles/minutes | 국내지수 시세추이 조회 (분봉)
+market_index_prices | /market/v1/index/prices | 국내지수 현재가 조회
+collateral | /accounts/v1/me/collateral | 내 계좌 담보 현황 조회
+deposit | /accounts/v1/me/deposit | 내 계좌 예수금 상세 조회
+transactions | /accounts/v1/me/transactions | 내 계좌 입출금 내역 조회
+valuation | /accounts/v1/me/valuation | 내 계좌 자산평가 조회
+holdings | /accounts/v1/me/holdings | 내 계좌 종목별 평가 조회
+valuation_by_asset | /accounts/v1/me/valuation/by-asset | 내 계좌 자산별 평가금액 조회
+ovs_orders_sell | /trading/v1/overseas/orders/sell | 해외주식 매도 주문
+ovs_orders_buy | /trading/v1/overseas/orders/buy | 해외주식 매수 주문
+ovs_reserved_orders_sell | /trading/v1/overseas/reserved-orders/sell | 해외주식 예약주문 매도
+ovs_reserved_orders_buy | /trading/v1/overseas/reserved-orders/buy | 해외주식 예약주문 매수
+ovs_reserved_orders_cancel | /trading/v1/overseas/reserved-orders/cancel | 해외주식 예약주문 취소
+ovs_reserved_orders | /trading/v1/overseas/reserved-orders | 해외주식 예약주문 조회
+ovs_orders_modify | /trading/v1/overseas/orders/modify | 해외주식 주문 정정
+ovs_orders_cancel | /trading/v1/overseas/orders/cancel | 해외주식 주문 취소
+ovs_market_candles_minutes | /market/v1/overseas/candles/minutes | 해외주식 시세추이 조회 (분봉)
+ovs_market_candles_days | /market/v1/overseas/candles/days | 해외주식 시세추이 조회 (일봉)
+ovs_market_trades_ticks | /market/v1/overseas/trades/ticks | 해외주식 체결추이 (틱)
+ovs_market_trades_minutes | /market/v1/overseas/trades/minutes | 해외주식 체결추이 조회 (분)
+ovs_orders_history | /trading/v1/overseas/orders/history | 해외주식 주문체결내역 조회
+ovs_orders_detail | /trading/v1/overseas/orders/detail | 해외주식 주문체결  상세조회
+ovs_orders_estimate | /trading/v1/overseas/orders/estimate | 해외주식 주문가능금액 조회
+ovs_holdings | /accounts/v1/me/overseas/holdings | 해외주식 잔고 조회
+ovs_currencies | /accounts/v1/me/overseas/currencies | 해외주식 외화잔고 조회
+ovs_market_orderbook | /market/v1/overseas/orderbook | 해외주식 호가 조회
+ovs_market_prices | /market/v1/overseas/prices | 해외주식 현재가 조회
+ovs_profit_loss | /accounts/v1/me/overseas/profit-loss | 해외주식 실현손익
+ovs_orders_today | /trading/v1/overseas/orders/today | 해외주식 당일 주문체결내역 조회
+ref_ovs_market_hours | /reference/v1/overseas/market-hours | 해외 장운영 조회
+ref_ovs_market_days | /reference/v1/overseas/market-days | 해외 영업일 조회
+ref_ovs_exchanges | /reference/v1/overseas/exchanges | 해외 거래소 조회
+fx_exchanges_history | /forex/v1/exchanges/history | 환전 내역 조회
+fx_rates_applied | /forex/v1/rates/applied | 환전 적용환율 조회
+fx_rates | /forex/v1/rates | 고시환율 조회
+fx_exchanges | /forex/v1/exchanges | 실시간 환전신청
+ovs_market_index_candles_days | /market/v1/overseas/index/candles/days | 해외지수 시세추이 조회
+ovs_market_index_candles_minutes | /market/v1/overseas/index/candles/minutes | 해외지수 시세추이 조회(분봉)
+ovs_market_index_prices | /market/v1/overseas/index/prices | 해외지수 현재가 조회
+ws_stck_cntg | /websocket/ohhts-stck-cntg | (실시간) 국내주식 현재가 (KRX)
+ws_nxt_cntg | /websocket/ohhts-nxt-cntg | (실시간) 국내주식 현재가 (NXT)
+ws_unt_cntg | /websocket/ohhts-unt-cntg | (실시간) 국내주식 현재가 (SOR 통합)
+ws_ovtp_cntg | /websocket/ohhts-ovtp-cntg | (실시간) 국내주식 현재가 (시간외단일가)
+ws_ovan_cntg | /websocket/ohhts-ovan-cntg | (실시간) 국내주식 시간외예상체결가
+ws_stck_aspr | /websocket/ohhts-stck-aspr | (실시간) 국내주식 호가
+ws_ovtp_aspr | /websocket/ohhts-ovtp-aspr | (실시간) 국내주식 호가 (시간외단일가)
+ws_cntg_infr | /websocket/ohhts-cntg-infr | (실시간) 주문 접수 통보
+ws_cntg_rslt | /websocket/ohhts-cntg-rslt | (실시간) 주문 체결 통보
+ws_exst_aspr | /websocket/ohhts-exst-aspr | (실시간) 해외주식 호가
+ws_exst_cntd | /websocket/ohhts-exst-cntd | (실시간) 해외주식 현재가 (주간거래)
+ws_exst_cntg | /websocket/ohhts-exst-cntg | (실시간) 해외주식 현재가 (정규장)
+ws_exst_cnta | /websocket/ohhts-exst-cnta | (실시간) 해외주식 현재가 (After)

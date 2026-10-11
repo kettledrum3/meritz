@@ -1,0 +1,20 @@
+# Meritz OpenAPI SDK & Client
+requests>=2.31.0
+websocket-client>=1.7.0
+python-dotenv>=1.0.0
+
+# CA VR Strategy & Analysis
+pandas>=2.2.0
+numpy>=1.26.0
+pytz>=2024.1
+plotly>=5.20.0
+APScheduler>=3.10.0
+tabulate>=0.9.0
+
+
+# Monitoring Dashboard (Optional)
+streamlit>=1.35.0
+
+# Quality & Testing
+pytest>=8.0.0
+ruff>=0.6.0
