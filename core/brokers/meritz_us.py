@@ -36,11 +36,12 @@ from core.notifier import send_telegram_message
 logger = logging.getLogger(__name__)
 
 # 거래소 코드 기본 매핑 (티커별 거래소)
+# 메리츠 해외 거래소 코드: OQ(나스닥), NY(뉴욕), AX(아멕스/Arca)
 EXCHANGE_CODE_MAP = {
-    "SOXL": ("OQ", "NASD"),
+    "SOXL": ("AX", "AMEX"),
     "TQQQ": ("OQ", "NASD"),
-    "UPRO": ("NY", "NYSE"),
-    "SPY":  ("NY", "NYSE"),
+    "UPRO": ("AX", "AMEX"),
+    "SPY":  ("AX", "AMEX"),
     "QQQ":  ("OQ", "NASD"),
     "AAPL": ("OQ", "NASD"),
     "NVDA": ("OQ", "NASD"),

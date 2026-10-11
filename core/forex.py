@@ -10,7 +10,7 @@
 import sys
 import logging
 from pathlib import Path
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 
 # open-api 패키지 경로 추가
@@ -84,7 +84,6 @@ class MeritzForexManager:
                         "tltr_slrt": float(row.get("tltr_slrt", 0.0)),         # 전신환 매도율
                         "hour": row.get("pros_hour", "")
                     }
-                    # DB exchange_rates 테이블에도 기록 (CAVR 환율 추적용)
                     if symbol == "USD" and rate_info["deal_stnd_exrt"] > 0:
                         save_exchange_rate_db(
                             trade_date=rate_info["date"],
@@ -96,9 +95,35 @@ class MeritzForexManager:
                             source="MERITZ"
                         )
                     return rate_info
-            logger.warning(f"[FX] {stnd_date} 기준 {symbol} 고시환율 데이터가 없습니다.")
         except Exception as e:
-            logger.error(f"[FX] 고시환율 조회 중 오류: {e}")
+            logger.debug(f"[FX] {stnd_date} 당일 고시환율 조회 대기: {e}")
+
+        # 당일 데이터가 아직 없는 경우(새벽 시간 등) 최대 5일 전까지 역추적하여 직전 고시환율을 조회
+        if target_date is None:
+            now_dt = datetime.now()
+            for delta in range(1, 6):
+                prev_date = (now_dt - timedelta(days=delta)).strftime("%Y%m%d")
+                try:
+                    data = self._call("fx_rates", {"stnd_date": prev_date, "crcd": symbol})
+                    rows = data if isinstance(data, list) else [data]
+                    for row in rows:
+                        if row.get("crcd") == symbol:
+                            rate_info = {
+                                "date": row.get("tr_date", prev_date),
+                                "crcd": symbol,
+                                "name": row.get("crcd_kor_name", "미국 달러"),
+                                "stnd_exrt": float(row.get("stnd_exrt", 0.0)),
+                                "deal_stnd_exrt": float(row.get("deal_stnd_exrt", 0.0)),
+                                "tltr_byrt": float(row.get("tltr_byrt", 0.0)),
+                                "tltr_slrt": float(row.get("tltr_slrt", 0.0)),
+                                "hour": row.get("pros_hour", "")
+                            }
+                            logger.info(f"[FX] 오늘 고시 전이므로 직전 고시환율({prev_date} 기준 {rate_info['deal_stnd_exrt']:,.2f}원)을 사용합니다.")
+                            return rate_info
+                except Exception:
+                    continue
+
+        logger.warning(f"[FX] {stnd_date} 기준 {symbol} 고시환율 데이터를 찾을 수 없습니다.")
         return None
 
     def get_applied_rate(self, direction: str = "BUY", symbol: str = "USD") -> Optional[Dict[str, Any]]:
