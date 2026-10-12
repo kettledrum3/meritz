@@ -190,6 +190,52 @@ class MeritzKrBroker(Broker):
             logger.error(f"❌ [Meritz 주문 예외 발생]: {e}")
             return False
 
+    @property
+    def account_no(self) -> str:
+        """메리츠 계좌 식별자"""
+        return getattr(settings, "MERITZ_ACCOUNT_NO", "MERITZ-ACCOUNT") or "MERITZ-ACCOUNT"
+
+    def get_stock_info(self, symbol: str) -> dict:
+        """국내 종목 정보 조회"""
+        try:
+            data = self._call("market_prices", {"mrkt_div_code": "J", "iscd": symbol})
+            if data:
+                return {
+                    "prdt_name": data.get("prdt_name") or data.get("rprs_mrkt_kor_name") or symbol,
+                    "prdt_clsf_name": "국내주식",
+                    "ivst_prdt_type_cd_name": "주식/ETF"
+                }
+        except Exception as e:
+            logger.warning(f"[Meritz KR] 종목정보 조회 실패 ({symbol}): {e}")
+        return {"prdt_name": symbol, "prdt_clsf_name": "국내주식", "ivst_prdt_type_cd_name": "주식/ETF"}
+
+    def get_exchange_rate(self, force: bool = False) -> dict:
+        """환율 정보 (국내는 1.0 고정)"""
+        return {"rate": 1.0, "diff": 0.0, "pct": 0.0, "source": "KRW"}
+
+    def fetch_daily_chart(self, symbol: str, days: int = 300) -> List[dict]:
+        """국내 주식 일봉 시세 조회"""
+        try:
+            res = self._call("market_candles_days", {"mrkt_div_code": "J", "iscd": symbol})
+            rows = res if isinstance(res, list) else [res]
+            chart = []
+            for row in rows[:days]:
+                d = row.get("stck_bsop_date") or row.get("date")
+                if not d:
+                    continue
+                chart.append({
+                    "Date": d,
+                    "Open": float(row.get("stck_oprc", 0.0)),
+                    "High": float(row.get("stck_hgpr", 0.0)),
+                    "Low": float(row.get("stck_lwpr", 0.0)),
+                    "Close": float(row.get("stck_clpr", 0.0)),
+                    "Volume": float(row.get("acml_vol", 0.0))
+                })
+            return chart
+        except Exception as e:
+            logger.error(f"[Meritz KR] 일봉 조회 실패 ({symbol}): {e}")
+            return []
+
     def fetch_open_orders(self, symbol: str) -> List[dict]:
         """미체결 내역 조회 (추후 카탈로그 키 매핑)"""
         return []
@@ -197,3 +243,4 @@ class MeritzKrBroker(Broker):
     def fetch_execution_history(self, symbol: str, start_date: str, end_date: str) -> List[dict]:
         """체결 내역 조회 (추후 카탈로그 키 매핑)"""
         return []
+

@@ -60,11 +60,12 @@ class MeritzForexManager:
         body = res.get("body", {})
         return body.get("data") or {}
 
-    def get_market_rate(self, symbol: str = "USD", target_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get_market_rate(self, symbol: str = "USD", target_date: Optional[str] = None, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
         """
         고시환율 조회 (기본: 오늘 일자, USD)
         :param symbol: 통화 코드 (대문자 3자리, 기본 'USD')
         :param target_date: 조회일자 YYYYMMDD (None이면 오늘)
+        :param force_refresh: 캐시 무시 강제 갱신 여부
         :return: 기준환율, 전신환 매도/매입환율, 매매기준환율 등 딕셔너리
         """
         stnd_date = target_date or datetime.now().strftime("%Y%m%d")

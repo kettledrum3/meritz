@@ -14,6 +14,7 @@
 | **2026-10-11 (일)** | **프로젝트 착수 & 기본 셋업** | • 메리츠 공식 Open API 리포지토리 클론 및 분석<br>• 기존 `d:\Python_D\kiwoom` 아키텍처 및 CA VR 엔진 분석<br>• 기본 프로젝트 폴더 구조 설계 및 베이스 브로커 인터페이스 구축<br>• 마이그레이션 가이드 및 환경설정 파일 작성 |
 | **2026-10-11 (일)** | **CAVR 이식 & 외환/인프라 완비** | • CA VR 핵심 엔진(`cavr.py`) 및 데이터베이스 모듈(`database.py`) 이식 완료<br>• 메리츠 외환/환전 통합 관리자(`forex.py`) 신규 구축 및 CAVR 연계<br>• 국내/미국 브로커(`meritz_kr.py`, `meritz_us.py`) 구현 완료<br>• OCI Dockerfile, docker-compose.yml 및 README.md 작성 완료<br>• 시스템 종합 사전점검(`test_meritz_setup.py`) 통과 |
 | **2026-10-12 (월)** | **API Key 발급 & 실호출 & 런타임 완비** | • 메리츠증권 실계좌 **App Key / App Secret 발급 및 `env/.env` 등록 완료**<br>• 국내/미국 실시간 시세, 잔고, 고시환율 실호출 검증 통과 (100% 동작)<br>• OCI 배포용 런타임 엔트리포인트(`core/scheduler.py`, `dashboard.py`) 신규 구현 완료<br>• 메리츠 공식 로고(`meritz_logo.png`) UI 적용 및 Arca/AMEX 거래소 코드(`AX`) 보정 |
+| **2026-10-12 (월) ~ 10-13 (화)** | **키움 대시보드/백테스트 전면 이식 및 안정화** | • 키움 대시보드 컨트롤 패널 및 5개 탭 전면 이식 (`dashboard.py`)<br>• 백테스트 엔진(`core/backtest.py`) 이식 및 TQQQ CA/VR 시뮬레이션 검증 완료<br>• `core.brokers.kiwoom_*` 잔재 제거 및 메리츠 브로커 완전 전환<br>• Streamlit 최신 규격(`width='stretch'`) 전면 반영 및 Deprecation 해소<br>• 외환 고시환율 연동 및 미국 휴장일/주말 판정 로직(`is_us_market_holiday`) 결함 해결 |
 
 ---
 
@@ -67,6 +68,48 @@
 6. **메리츠 공식 브랜딩 로고 적용**:
    - 대시보드 사이드바 상단 및 메인 헤더에 `meritz_logo.png` 로고 탑재
 
+### 3) 2026-10-12 (월) 키움 대시보드 구조 및 백테스트 전면 이식 완료
+1. **키움 스타일 컨트롤 패널 & 대시보드 100% 이식 (`dashboard.py`)**:
+   - **사이드바 구성**:
+     - 상단 메리츠 로고 및 사용자 환영/로그아웃
+     - 4개 분할 운영 설정: 운영 모드(실전/모의), 활성 시장(미국/한국), 방법론(CA/VR), 실행 모드(투자 실행/백테스트)
+     - 전략 설정 컨트롤: 종목 선택, 저장된 전략 선택, 선택됨 배지, 자본금, G값, 밴드(%), 투자방식(적립식/거치식/인출식), 주기별 적립/인출액, 주기(격주 금요일), 0일차 잔고 편입, Pool 사용한도(%) 슬라이더
+     - 3대 전략 관리 버튼: [신규전략 저장 및 실행], [저장된 전략 불러오기], [전략 업데이트]
+     - 스케줄러 제어: 30초 주기 Heartbeat 감지 프래그먼트, [실행]/[정지] 토글, 실시간 상태 배지
+     - 수동 주문 제어: [주문 계획 생성 (Preview)]
+     - 전략별 투자 현황 요약 배너 (SOXL CA, TQQQ VR 등)
+   - **메인 탭 5종 구성**:
+     1. `🇺🇸 미국 주식 시장 현황` (선택 시장 우선 배치)
+     2. `🇰🇷 한국 주식 시장 현황`
+     3. `🏁 종료된 전략 내역` (실현 손익 요약, MDD, 거래 내역)
+     4. `📈 손익분석` (일/주/월/년 단위 Plotly 차트 및 종목/전략 비중 파이차트)
+     5. `⚙️ 설정` (사용자 프로필, Zoho SMTP 알림 설정)
+   - **시장 탭 내부 핵심 모듈 완비**:
+     - 전략 요약 아코디언 (`[CA] ...`, `[VR] ...`) 및 작업 대상 헤더
+     - 10초 주기 실시간 시세 / 고시환율 / [지금 환율 조회] 버튼
+     - `미국 환율(USD/KRW) 일별 변동 추이` 익스팬더: Plotly 시계열 라인 차트 및 최근 기록 테이블
+     - 계좌 상태 갱신 / 1주일 강제 동기화 버튼 / 운용 자본금 및 총 예수금 메트릭
+     - 실시간 보유 종목 현황 카드
+     - 실전 매매 운영: VR 실력공식 구성 변수 표 (`V1`, `Pool`, `G`, `E`, `Contribution`, `V2`), 밴드 위치 게이지
+     - 당일 발주 기준 상태 및 1~5차 매수/매도 지정가 예약 주문 가이드
+     - 주문 내역 조회 & 전략 필터링
+     - 실현 손익 현황 & 거래 내역 테이블 (별칭 필터, 실시간 동기화)
+     - 하단 실시간 시스템 로그 및 백그라운드 스케줄러 로그 뷰어
+2. **백테스트 엔진 전면 이식 및 검증 (`core/backtest.py`)**:
+   - `BacktestBroker` 및 `run_backtest` 모듈 이식 완료
+   - CA V2.2 및 VR 가변 밴드/Pool 한도 알고리즘 완벽 지원
+   - `TQQQ` 300일 데이터 기반 CA/VR 시뮬레이션 검증 완료 (수익률, CAGR, MDD, 승률, Plotly 시계열 차트 연동)
+3. **보조 지원 모듈 완비**:
+   - `core/auth.py`: IP 기반 자동 로그인, OTP 및 사용자 비밀번호 관리
+   - `core/email_service.py`: Zoho SMTP 기반 이메일 알림
+   - `core/fetch_data.py`: 메리츠 브로커 기반 일봉 데이터 수집
+   - `core/brokers/meritz_kr.py`, `core/brokers/meritz_us.py`: `account_no`, `get_stock_info`, `get_exchange_rate`, `fetch_daily_chart` 확충
+4. **런타임 결함 해결 및 최신 Streamlit 규격 반영**:
+   - **브로커 동적 임포트 오류 해결**: `dashboard.py` 내 `core.brokers.kiwoom_*` 잔재를 `core.brokers.meritz_*`로 전면 교체하여 `ModuleNotFoundError` 근본 해소
+   - **Streamlit 최신 권고사항 반영**: `use_container_width=True` Deprecation 대응으로 모든 위젯에 `width='stretch'` 적용 완료 (경고 0건)
+   - **외환 고시환율 시그니처 정합성 교정**: `forex_manager.get_market_rate`의 `force_refresh` 옵셔널 인자 지원 및 반환 딕셔너리(`deal_stnd_exrt`, `diff`, `pct`)와 `save_exchange_rate_db` 인자 연동 안정화
+   - **미국장 휴장일 및 주말 판정 로직 보완**: `is_us_market_holiday(d=None)` 기본값 지원 및 토/일 주말 감지 로직 추가로 스케줄러 5분 급락 감시(`job_us_intraday_check`)의 `TypeError` 해소 및 실호출 통과
+
 ---
 
 ## 3. 핵심 기술 아키텍처 및 차이점 정리
@@ -85,10 +128,16 @@
 
 - [x] **1. 메리츠 개발자 포털 API KEY 신청 및 발급받기**: 발급 완료 및 `env/.env` 등록 완료
 - [x] **2. 실제 시세/잔고/환율 실호출 동작 검증**: 국내/미국 시세 및 고시환율 수신 검증 완료
-- [x] **3. 런타임 엔트리포인트 파일 완비**: `core/scheduler.py`, `dashboard.py` 구현 및 문법 검증 완료
-- [ ] **4. Docker 이미지 재빌드 및 OCI Portainer 재배포**:
+- [x] **3. 키움 대시보드 UI/UX 및 백테스트 전면 이식 완료**: `dashboard.py`, `core/backtest.py` 구현 및 검증 통과
+- [x] **4. 런타임 오류 및 브로커/스케줄러 정합성 패치 완료**: 브로커 임포트, Streamlit 위젯 규격, 휴장일 판정 완료
+- [ ] **5. 전략 초기상태(Initial State) 보완사항 정밀 점검 (내일 진행 예정)**:
+  - 신규 전략 생성 시 0일차 기존 잔고 편입(`include_existing`) 계산 로직 점검
+  - VR 목표 V값 초기화 공식($V_0 = \frac{Pool}{G} + \frac{E}{2\sqrt{G}}$) 및 가변 Bootstrap 모드 진입 조건 검증
+  - CA 분할 매수금($\frac{Budget}{a}$) 및 회차 초기화 정합성 확인
+- [ ] **6. Docker 이미지 재빌드 및 OCI Portainer 재배포**:
   - `docker buildx build --platform linux/amd64,linux/arm64 -t simji3/meritz-dashboard:latest -t simji3/meritz-scheduler:latest --push .`
   - OCI Portainer에서 `Re-pull image and redeploy` 실행하여 컨테이너 정상 기동
-- [ ] **5. CAVR 실시간 주문 검증 (안전모드 -> 실거래 가동)**:
+- [ ] **7. CAVR 실시간 주문 검증 (안전모드 -> 실거래 가동)**:
   - `MERITZ_READ_ONLY=1` 안전 상태에서 CA/VR 주문 프리뷰 및 토큰 발급 동작 확인
   - 1주 소액 테스트 후 `MERITZ_READ_ONLY=0` 전환하여 본 전략 정식 가동
+

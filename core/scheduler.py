@@ -519,6 +519,95 @@ def job_heartbeat():
 
 
 # ==============================================================================
+# [대시보드 수동 실행 및 개별 전략 실행 헬퍼]
+# ==============================================================================
+
+def job_update_exchange_rate(broker=None, force=False, is_market_open=False):
+    """메리츠 외환 관리자를 사용하여 고시환율을 조회하고 DB에 저장"""
+    try:
+        from core.database import (
+            save_exchange_rate_db,
+            get_exchange_rate_by_date_db,
+            get_previous_exchange_rate_db,
+            set_config
+        )
+        rate_info = forex_manager.get_market_rate(symbol="USD", force_refresh=force)
+        if not rate_info:
+            logger.warning("⚠️ [FX 갱신] 고시환율 정보를 가져오지 못했습니다.")
+            return None
+
+        rate = float(rate_info.get("deal_stnd_exrt") or rate_info.get("stnd_exrt") or 0.0)
+        trade_date = datetime.now(KST).strftime("%Y-%m-%d")
+        now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+
+        prev_record = get_previous_exchange_rate_db(trade_date)
+        base_rate = prev_record["rate"] if prev_record and prev_record.get("rate") else float(rate_info.get("stnd_exrt") or rate)
+        diff = rate - base_rate
+        pct = (diff / base_rate * 100.0) if base_rate > 0 else 0.0
+
+        set_config("USDKRW", f"{rate:.2f}")
+        set_config("USDKRW_DIFF", f"{diff:+.2f}")
+        set_config("USDKRW_PCT", f"{pct:+.2f}")
+        set_config("USDKRW_UPDATE_TIME", now_str)
+
+        save_exchange_rate_db(
+            trade_date=trade_date,
+            recorded_at=now_str,
+            rate=rate,
+            base_rate=base_rate,
+            diff=diff,
+            pct=pct,
+            source="MERITZ_FOREX"
+        )
+        logger.info(f"💱 [FX 갱신] USD/KRW = {rate:,.2f}원 ({diff:+.2f}원, {pct:+.2f}%)")
+        return {"rate": rate, "diff": diff, "pct": pct}
+    except Exception as e:
+        logger.error(f"❌ [FX 갱신 실패]: {e}")
+        return None
+
+def run_ca_strategies(market: str = "US", check_existing: bool = False, force: bool = False, order_filter: str = None, transition_only: bool = False, broker=None):
+    """DB에 저장된 CA 전략 실행"""
+    if broker is None:
+        broker = get_kr_broker() if market == "KR" else get_us_broker()
+    trade_mode = get_trade_mode()
+    states = get_all_states_db(strategy_type="CA", market=market, trade_mode=trade_mode)
+    results = []
+    for st in states:
+        if not st.get("is_active", True) and not force:
+            continue
+        sym = st.get("symbol")
+        alias = st.get("strategy_name")
+        try:
+            cfg = CAConfig(symbol=sym, use_db=True, market=market, strategy_name=alias)
+            eng = CostAveragingEngine(cfg, broker=broker)
+            orders = eng.run_cycle(datetime.now(), check_existing_orders=check_existing, preview=False)
+            results.append((alias, orders))
+        except Exception as e:
+            logger.error(f"❌ [CA 실행 오류] {alias}: {e}")
+    return results
+
+def run_vr_strategies(market: str = "US", check_existing: bool = False, force: bool = False, order_filter: str = None, broker=None):
+    """DB에 저장된 VR 전략 실행"""
+    if broker is None:
+        broker = get_kr_broker() if market == "KR" else get_us_broker()
+    trade_mode = get_trade_mode()
+    states = get_all_states_db(strategy_type="VR", market=market, trade_mode=trade_mode)
+    results = []
+    for st in states:
+        if not st.get("is_active", True) and not force:
+            continue
+        sym = st.get("symbol")
+        alias = st.get("strategy_name")
+        try:
+            cfg = VRConfig(symbol=sym, use_db=True, market=market, strategy_name=alias)
+            eng = ValueRebalancingEngine(cfg, broker=broker)
+            orders = eng.place_daily_limit_orders(datetime.now(), contribution=0.0, is_cycle_start_day=False, check_existing_orders=check_existing, preview=False)
+            results.append((alias, orders))
+        except Exception as e:
+            logger.error(f"❌ [VR 실행 오류] {alias}: {e}")
+    return results
+
+# ==============================================================================
 # [스케줄러 메인 실행부]
 # ==============================================================================
 

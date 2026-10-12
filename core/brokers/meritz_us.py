@@ -10,6 +10,7 @@
 
 import sys
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Tuple, List, Literal, Optional, Dict
 
@@ -283,6 +284,85 @@ class MeritzUsBroker(Broker):
             send_telegram_message(err)
             return False
 
+    @property
+    def account_no(self) -> str:
+        """메리츠 계좌 식별자 (환경설정 또는 기본값)"""
+        return getattr(settings, "MERITZ_ACCOUNT_NO", "MERITZ-ACCOUNT") or "MERITZ-ACCOUNT"
+
+    def get_stock_info(self, symbol: str) -> dict:
+        """종목 상세 정보 조회 (UI 검색용)"""
+        symbol = symbol.upper()
+        try:
+            mrkt_cls_code, _ = self._resolve_exchange(symbol)
+            data = self._call("ovs_market_prices", {
+                "mrkt_div_code": "OV",
+                "mrkt_cls_code": mrkt_cls_code,
+                "iscd": symbol,
+                "dely_rltm_cls_code": "0"
+            })
+            if data:
+                return {
+                    "prdt_name": data.get("prdt_name") or data.get("stck_shrn_iscd") or symbol,
+                    "prdt_clsf_name": "해외(미국)주식",
+                    "ivst_prdt_type_cd_name": "ETF/주식"
+                }
+        except Exception as e:
+            logger.warning(f"[Meritz US] 종목정보 조회 실패 ({symbol}): {e}")
+        return {"prdt_name": symbol, "prdt_clsf_name": "해외(미국)주식", "ivst_prdt_type_cd_name": "ETF/주식"}
+
+    def get_exchange_rate(self, force: bool = False) -> dict:
+        """실시간 고시환율 조회 (MeritzForexManager 연계)"""
+        try:
+            from core.forex import forex_manager
+            from core.database import get_previous_exchange_rate_db
+            rate_info = forex_manager.get_market_rate(symbol="USD", force_refresh=force)
+            if rate_info:
+                market_rate = float(rate_info.get("deal_stnd_exrt") or rate_info.get("stnd_exrt") or 0.0)
+                if market_rate > 0:
+                    trade_date = rate_info.get("date", datetime.now().strftime("%Y%m%d"))
+                    prev_record = get_previous_exchange_rate_db(trade_date)
+                    base_rate = prev_record["rate"] if prev_record and prev_record.get("rate") else float(rate_info.get("stnd_exrt") or market_rate)
+                    diff = market_rate - base_rate
+                    pct = (diff / base_rate * 100.0) if base_rate > 0 else 0.0
+                    return {
+                        "rate": market_rate,
+                        "diff": diff,
+                        "pct": pct,
+                        "source": "MERITZ_FOREX"
+                    }
+        except Exception as e:
+            logger.error(f"[Meritz US] 환율 조회 실패: {e}")
+        return {"rate": 1330.0, "diff": 0.0, "pct": 0.0, "source": "FALLBACK"}
+
+    def fetch_daily_chart(self, symbol: str, days: int = 300) -> List[dict]:
+        """미국 주식 일봉 시세 조회"""
+        symbol = symbol.upper()
+        mrkt_cls_code, _ = self._resolve_exchange(symbol)
+        try:
+            res = self._call("ovs_market_candles_days", {
+                "mrkt_div_code": "OV",
+                "mrkt_cls_code": mrkt_cls_code,
+                "iscd": symbol
+            })
+            rows = res if isinstance(res, list) else [res]
+            chart = []
+            for row in rows[:days]:
+                d = row.get("stck_bsop_date") or row.get("date")
+                if not d:
+                    continue
+                chart.append({
+                    "Date": d,
+                    "Open": float(row.get("open_pric") or row.get("stck_oprc") or 0.0),
+                    "High": float(row.get("high_pric") or row.get("stck_hgpr") or 0.0),
+                    "Low": float(row.get("low_pric") or row.get("stck_lwpr") or 0.0),
+                    "Close": float(row.get("clos_pric") or row.get("stck_clpr") or 0.0),
+                    "Volume": float(row.get("acml_vol") or 0.0)
+                })
+            return chart
+        except Exception as e:
+            logger.error(f"[Meritz US] 일봉 조회 실패 ({symbol}): {e}")
+            return []
+
     def fetch_open_orders(self, symbol: str) -> List[dict]:
         """미체결 내역 조회 (ovs_orders_history / ovs_orders_today 필터)"""
         return []
@@ -290,3 +370,4 @@ class MeritzUsBroker(Broker):
     def fetch_execution_history(self, symbol: str, start_date: str, end_date: str) -> List[dict]:
         """체결 내역 조회 (ovs_orders_history)"""
         return []
+

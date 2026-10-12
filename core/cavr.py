@@ -272,8 +272,15 @@ def fetch_kr_holiday(target_date: str = None) -> bool:
         logger.error(f"[KR Holiday] 오류 발생: {e}")
     return True
 
-def is_us_market_holiday(d: datetime) -> bool:
-    """미국 주식시장(NYSE/NASDAQ) 공식 10대 공휴일 판정"""
+def is_us_market_holiday(d: Optional[datetime] = None) -> bool:
+    """미국 주식시장(NYSE/NASDAQ) 공식 휴장일(주말 또는 10대 공휴일) 판정"""
+    if d is None:
+        d = datetime.now(timezone('America/New_York'))
+    
+    # 주말(토=5, 일=6)은 휴장일
+    if d.weekday() >= 5:
+        return True
+
     year = d.year
     month = d.month
     day = d.day
