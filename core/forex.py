@@ -75,24 +75,29 @@ class MeritzForexManager:
             rows = data if isinstance(data, list) else [data]
             for row in rows:
                 if row.get("crcd") == symbol:
+                    stnd_exrt = float(row.get("stnd_exrt", 0.0))
+                    deal_stnd_exrt = float(row.get("deal_stnd_exrt", 0.0))
+                    # 당일 실제 기준환율은 stnd_exrt(실시간 고시). deal_stnd_exrt는 전일 매매기준환율(전일 장마감 기준)
+                    effective_rate = stnd_exrt if stnd_exrt > 0 else deal_stnd_exrt
                     rate_info = {
                         "date": row.get("tr_date", stnd_date),
                         "crcd": symbol,
                         "name": row.get("crcd_kor_name", "미국 달러"),
-                        "stnd_exrt": float(row.get("stnd_exrt", 0.0)),         # 기준환율
-                        "deal_stnd_exrt": float(row.get("deal_stnd_exrt", 0.0)), # 매매기준환율
+                        "stnd_exrt": stnd_exrt,                  # 당일 고시 기준환율 (실시간)
+                        "deal_stnd_exrt": deal_stnd_exrt,        # 전일 매매기준환율
+                        "effective_rate": effective_rate,        # 유효 실시간 환율
                         "tltr_byrt": float(row.get("tltr_byrt", 0.0)),         # 전신환 매입율
                         "tltr_slrt": float(row.get("tltr_slrt", 0.0)),         # 전신환 매도율
                         "hour": row.get("pros_hour", "")
                     }
-                    if symbol == "USD" and rate_info["deal_stnd_exrt"] > 0:
+                    if symbol == "USD" and effective_rate > 0:
                         save_exchange_rate_db(
                             trade_date=rate_info["date"],
                             recorded_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            rate=rate_info["deal_stnd_exrt"],
-                            base_rate=rate_info["stnd_exrt"],
-                            diff=0.0,
-                            pct=0.0,
+                            rate=effective_rate,
+                            base_rate=deal_stnd_exrt if deal_stnd_exrt > 0 else effective_rate,
+                            diff=round(effective_rate - (deal_stnd_exrt if deal_stnd_exrt > 0 else effective_rate), 2),
+                            pct=round(((effective_rate - deal_stnd_exrt) / deal_stnd_exrt * 100.0) if deal_stnd_exrt > 0 else 0.0, 2),
                             source="MERITZ"
                         )
                     return rate_info
@@ -109,17 +114,21 @@ class MeritzForexManager:
                     rows = data if isinstance(data, list) else [data]
                     for row in rows:
                         if row.get("crcd") == symbol:
+                            stnd_exrt = float(row.get("stnd_exrt", 0.0))
+                            deal_stnd_exrt = float(row.get("deal_stnd_exrt", 0.0))
+                            effective_rate = stnd_exrt if stnd_exrt > 0 else deal_stnd_exrt
                             rate_info = {
                                 "date": row.get("tr_date", prev_date),
                                 "crcd": symbol,
                                 "name": row.get("crcd_kor_name", "미국 달러"),
-                                "stnd_exrt": float(row.get("stnd_exrt", 0.0)),
-                                "deal_stnd_exrt": float(row.get("deal_stnd_exrt", 0.0)),
+                                "stnd_exrt": stnd_exrt,
+                                "deal_stnd_exrt": deal_stnd_exrt,
+                                "effective_rate": effective_rate,
                                 "tltr_byrt": float(row.get("tltr_byrt", 0.0)),
                                 "tltr_slrt": float(row.get("tltr_slrt", 0.0)),
                                 "hour": row.get("pros_hour", "")
                             }
-                            logger.info(f"[FX] 오늘 고시 전이므로 직전 고시환율({prev_date} 기준 {rate_info['deal_stnd_exrt']:,.2f}원)을 사용합니다.")
+                            logger.info(f"[FX] 오늘 고시 전이므로 직전 고시환율({prev_date} 기준 {effective_rate:,.2f}원)을 사용합니다.")
                             return rate_info
                 except Exception:
                     continue

@@ -32,8 +32,8 @@ python examples/02_market.py 005930
 ```
 
 ```
-삼성전자  71800원  전일대비 900 (1.27%)
-  매도1 71900  매수1 71800
+삼성전자  273000원  전일대비 5000 (1.87%)
+  매도1 273500  매수1 273000
   일봉 40건
 ```
 
@@ -84,8 +84,8 @@ res = c.call(cat.get("market_prices"), {"mrkt_div_code": "J", "iscd": "005930"})
 
 | 파일 | 내용 |
 |---|---|
-| [`openapi.json`](openapi.json) | REST 69건 — OpenAPI 3.1 |
-| [`asyncapi.json`](asyncapi.json) | 실시간 13건 — AsyncAPI 3.0 |
+| [`openapi.json`](openapi.json) | REST 71건 — OpenAPI 3.1 |
+| [`asyncapi.json`](asyncapi.json) | 실시간 14건 — AsyncAPI 3.0 |
 | [`CATALOG.md`](CATALOG.md) | 카탈로그 파일이 무엇이고 어떻게 갱신하는지 |
 
 포털 등록 명세를 표준 형식으로 낸 파일입니다. Postman·Insomnia 같은 도구나 코드 생성기에
@@ -126,7 +126,7 @@ pytest tests/ -q
 
 - 대상 서버는 운영이 기본값이고, 앱키에 연결된 계좌는 실계좌입니다. 모의계좌는 없습니다
 - 기본이 조회 전용입니다. 주문·환전을 쓰시려면 `MERITZ_READ_ONLY=0`으로 여셔야 합니다
-- `05_order.py`의 확인 단계를 지우면 확인 없이 전송됩니다
+- 주문·환전 확인 절차는 클라이언트(`ApiClient.call()`) 안에 있어 예제 코드를 고쳐도 끌 수 없습니다
 - 앱키와 시크릿을 저장소에 커밋하지 말아 주세요
 - [DISCLAIMER.md](DISCLAIMER.md)를 꼭 읽어 주세요
 

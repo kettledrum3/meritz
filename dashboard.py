@@ -158,6 +158,7 @@ if st.session_state.authenticated:
 
 # --- 모듈 임포트 (상단으로 이동) ---
 from dotenv import load_dotenv, set_key
+from config.settings import settings
 from core.cavr import CAConfig, CAState, CostAveragingEngine, VRConfig, VRState, ValueRebalancingEngine
 from core.backtest import run_backtest
 from core.fetch_data import update_ticker_data
@@ -167,9 +168,23 @@ from core.auth import (
 )
 from core.notifier import send_telegram_message
 from core.scheduler import run_ca_strategies, run_vr_strategies, job_update_exchange_rate # 스케줄러 로직 직접 호출을 위해 임포트
-from core.database import get_exchange_rate_history_db
+from core.database import get_exchange_rate_history_db, get_latest_exchange_rate_db, get_forex_history_db
+from core.forex import forex_manager
 import glob
 import json
+import base64
+
+def get_logo_html(height: int = 32, margin_right: int = 8, align: str = "middle") -> str:
+    """메리츠 공식 로고의 base64 HTML 태그 반환 (인라인 헤더/타이틀용)"""
+    logo_file = os.path.join(PROJECT_ROOT, "meritz_logo.png")
+    if os.path.exists(logo_file):
+        try:
+            with open(logo_file, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("utf-8")
+            return f'<img src="data:image/png;base64,{b64}" style="height:{height}px; vertical-align:{align}; margin-right:{margin_right}px; object-fit:contain; display:inline-block;" />'
+        except Exception:
+            pass
+    return ""
 
 def get_client_ip() -> str:
     """Streamlit 요청 헤더 또는 런타임에서 접속 클라이언트 IP 추출"""
@@ -613,38 +628,58 @@ def display_sidebar_summary(m_display, m_code):
             st.sidebar.error(f"Error loading state: {e}")
 
 with st.sidebar:
-    # [메리츠 공식 로고 및 헤더]
-    logo_file = os.path.join(PROJECT_ROOT, "meritz_logo.png")
-    if os.path.exists(logo_file):
-        st.image(logo_file, width='stretch')
-    st.title("🚀 메리츠CAVR 컨트롤 패널")
+    # [메리츠 공식 로고 및 헤더 - H1 크기로 로고 축소 탑재]
+    logo_html_sidebar = get_logo_html(height=28, margin_right=8)
+    st.markdown(f"<h1 style='display:flex; align-items:center; font-size:1.42rem; font-weight:700; margin: 0 0 0.8rem 0;'>{logo_html_sidebar}메리츠CAVR 컨트롤 패널</h1>", unsafe_allow_html=True)
     st.write(f"👤 **{st.session_state.get('username', 'Investor')}**님 환영합니다.")
     if st.button("🔓 로그아웃", key="sidebar_top_logout_btn", width='stretch'):
         handle_logout()
     
     st.write("### 🎛️ 시스템 운영 설정")
     with st.container(border=True):
-        # 1행: 운영 모드 & 활성 시장
+        # 모의투자 라디오 옵션 dimming 및 마우스 클릭 차단 스타일 (컬럼 밖 상단에 1회 선언하여 컬럼 간 높이 왜곡 방지)
+        st.markdown("""
+        <style>
+        div[data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(2),
+        div[data-testid="stRadio"] div[role="radiogroup"] > label:nth-child(2),
+        div[data-testid="stRadio"] label:has(input[value="모의 투자"]) {
+            opacity: 0.35 !important;
+            pointer-events: none !important;
+            cursor: not-allowed !important;
+            filter: grayscale(100%) !important;
+        }
+        div[data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(2) * {
+            pointer-events: none !important;
+            cursor: not-allowed !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        current_trade_mode = get_trade_mode()
+        if current_trade_mode == "MOCK":
+            set_config("TRADE_MODE", "REAL")
+            current_trade_mode = "REAL"
+
+        # 세션 캐시로 인해 모의 투자가 선택된 상태로 렌더링되지 않도록 강제 리셋
+        if st.session_state.get("trade_mode_selector_ui") != "실전 투자":
+            st.session_state["trade_mode_selector_ui"] = "실전 투자"
+
+        def _guard_mock_trade_mode():
+            if st.session_state.get("trade_mode_selector_ui") == "모의 투자":
+                st.session_state["trade_mode_selector_ui"] = "실전 투자"
+                st.toast("⚠️ 메리츠 Open API는 모의투자를 미지원합니다. (HTS 전용)", icon="ℹ️")
+
+        # 1행: 운영 모드 & 활성 시장 (동일한 라디오 구성으로 상단 높이 완벽 일치)
         r1_col1, r1_col2 = st.columns(2)
         with r1_col1:
-            current_trade_mode = get_trade_mode()
-            mode_options = ["실전 투자", "모의 투자"]
-            def_mode_idx = 1 if current_trade_mode == "MOCK" else 0
-            active_mode_display = st.radio("🏷️ 운영 모드", mode_options, index=def_mode_idx, key="trade_mode_selector_ui")
-            active_mode = "MOCK" if active_mode_display == "모의 투자" else "REAL"
-            
-            if active_mode != current_trade_mode:
-                set_config("TRADE_MODE", active_mode)
-                # 조기 리런 시 market_selector 세션 상태 소실 방지를 위해 대기 업데이트에 백업
-                if "market_selector" in st.session_state:
-                    st.session_state["pending_market_selector_update"] = st.session_state["market_selector"]
-                    
-                # Clear live_account cache when switching trade mode!
-                if 'live_account' in st.session_state:
-                    del st.session_state['live_account']
-                st.success(f"거래 모드 변경됨: {active_mode}")
-                time.sleep(1)
-                st.rerun()
+            active_mode_display = st.radio(
+                "🏷️ 운영 모드",
+                ["실전 투자", "모의 투자"],
+                index=0,
+                key="trade_mode_selector_ui",
+                on_change=_guard_mock_trade_mode
+            )
+            active_mode = "REAL"
 
         with r1_col2:
             active_market_display = st.radio("🌐 활성 시장", ["미국 시장", "한국 시장"], key="market_selector")
@@ -675,6 +710,31 @@ with st.sidebar:
             # 실행 모드 선택 (투자 실행 vs 백테스트)
             mode_key = f"{t_mode}_{m_lower}_run_mode"
             s_mode = st.radio("🎯 실행 모드", ["투자 실행", "백테스트"], key=mode_key)
+
+        st.divider() # 행 구분선
+
+        # 3행: 환전 모드 (메리츠 100% 우대 이벤트 연계)
+        r3_col1, r3_col2 = st.columns([1.1, 0.9])
+        with r3_col1:
+            current_fx_mode = get_config("FX_MODE", "AUTO" if getattr(settings, "FX_AUTO_EXCHANGE", True) else "MANUAL")
+            fx_mode_options = ["자동 환전", "수동 환전"]
+            fx_def_idx = 0 if current_fx_mode == "AUTO" else 1
+            active_fx_display = st.radio("💱 환전 모드", fx_mode_options, index=fx_def_idx, key="fx_mode_selector_ui")
+            active_fx_mode = "AUTO" if active_fx_display == "자동 환전" else "MANUAL"
+            if active_fx_mode != current_fx_mode:
+                set_config("FX_MODE", active_fx_mode)
+                settings.FX_AUTO_EXCHANGE = (active_fx_mode == "AUTO")
+                st.toast(f"환전 모드 변경됨: {active_fx_display}", icon="💱")
+        with r3_col2:
+            st.markdown(
+                """
+                <div style='margin-top: 1.35rem; padding: 6px 8px; background-color: #f0f7ff; border: 1px solid #cce3f5; border-radius: 6px;'>
+                    <span style='color: #1976d2; font-weight: bold; font-size: 0.78rem;'>🎉 환율우대 100%</span><br>
+                    <span style='color: #666; font-size: 0.70rem;'>스프레드 0원 (이벤트)</span>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
     # --- Broker 및 Currency Symbol 정의 (한 번만) ---
     @st.cache_resource
@@ -1204,7 +1264,8 @@ with st.sidebar:
     display_sidebar_summary(active_market_display, market_code)
 
 display_mode = "모의 투자" if (current_trade_mode == "MOCK" and mode == "실전 투자") else mode
-st.title(f"🚀 {display_mode} - {strategy_choice} 전략")
+logo_html_main = get_logo_html(height=34, margin_right=10)
+st.markdown(f"<h1 style='display:flex; align-items:center; font-size:2.0rem; font-weight:700; margin: 0.5rem 0 1rem 0;'>{logo_html_main}{display_mode} - {strategy_choice} 전략</h1>", unsafe_allow_html=True)
 
 # [ADD] 현재 활성화된 모드에 대한 명확한 한글 설명 제공
 if display_mode == "실전 투자":
@@ -1214,16 +1275,245 @@ elif display_mode == "모의 투자":
 elif display_mode == "백테스트":
     st.warning(f"🧪 **[백테스트 모드]** 과거 {fetch_days}일간의 누적 데이터를 토대로 CA/VR 전략 시뮬레이션을 수행합니다. 실제 주문은 발생하지 않습니다.")
 
+# --- [ADD] 메리츠 MY 계좌평가 & 잔고내역 상단 영역 (기본 닫힘 expander) ---
+def fetch_meritz_account_data(force=False):
+    """메리츠 Open API를 통해 자산평가 및 보유종목 데이터를 세션 캐시(15초)와 함께 조회"""
+    now = time.time()
+    cache = st.session_state.get("_meritz_my_account_cache")
+    if not force and cache and (now - cache.get("ts", 0) < 15):
+        return cache.get("valuation", {}), cache.get("holdings", [])
+
+    # 메리츠 일일 전산 점검 시간(23:50~00:20 KST)인 경우 API 에러를 피하고 기존 캐시 유지
+    kr_now = datetime.now(pytz.timezone('Asia/Seoul'))
+    if kr_now.time() >= dtime(23, 50) or kr_now.time() < dtime(0, 20):
+        if cache:
+            return cache.get("valuation", {}), cache.get("holdings", [])
+
+    val_data = {}
+    hld_data = []
+    try:
+        from meritz import client, load_catalog
+        cat, c = load_catalog(), client()
+
+        val_api = cat.get("valuation")
+        if val_api:
+            res_val = c.call(val_api, {})
+            if res_val.get("ok"):
+                body = res_val.get("body", {})
+                if isinstance(body, dict):
+                    val_data = body.get("data", {})
+
+        hld_api = cat.get("holdings")
+        if hld_api:
+            res_hld = c.call(hld_api, {})
+            if res_hld.get("ok"):
+                body = res_hld.get("body", {})
+                if isinstance(body, dict):
+                    hld_data = body.get("data", [])
+    except Exception as e:
+        if "서비스 가능시간이 아닙니다" in str(e):
+            logger.warning("⚠️ 메리츠 일일 점검 시간 (23:50 ~ 00:20)으로 인해 잔고 조회가 대기 상태입니다.")
+            if cache:
+                return cache.get("valuation", {}), cache.get("holdings", [])
+        else:
+            logger.error(f"메리츠 MY 계좌평가/잔고 조회 실패: {e}")
+
+    st.session_state["_meritz_my_account_cache"] = {
+        "ts": now,
+        "valuation": val_data,
+        "holdings": hld_data
+    }
+    return val_data, hld_data
+
+def render_my_account_expander(broker):
+    """모든 화면 상단에 기본으로 닫힌(expanded=False) 메리츠 MY 계좌평가/보유잔고 영역을 렌더링"""
+    with st.expander("💼 MY 계좌평가 (계좌자산 및 보유잔고 상세)", expanded=False):
+        # 메리츠 일일 전산 점검 시간(23:50 ~ 00:20) 안내 배너
+        kr_now = datetime.now(pytz.timezone('Asia/Seoul'))
+        if kr_now.time() >= dtime(23, 50) or kr_now.time() < dtime(0, 20):
+            st.warning("🕒 **메리츠증권 일일 시스템 점검 시간 안내 (23:50 ~ 00:20)**: 시스템 점검 동안은 계좌정보 조회 및 서비스가 일시 제한되며, 점검 시간 이후(00:20) 자동으로 최신 상태로 재조회됩니다.")
+
+        # 상단 제어 바: 계좌번호, 성명, 상품, 조회 버튼
+        c_acc, c_btn = st.columns([0.85, 0.15])
+        
+        # 계좌번호 포맷팅 (예: 3043653601 -> 3043-6536-01)
+        raw_acc = getattr(broker, "account_no", None) or getattr(settings, "ACCOUNT_NO", "3043653601") or "3043653601"
+        clean_acc = re.sub(r'[^0-9]', '', str(raw_acc))
+        if len(clean_acc) == 10:
+            formatted_acc = f"{clean_acc[:4]}-{clean_acc[4:8]}-{clean_acc[8:]}"
+        elif len(clean_acc) >= 8:
+            formatted_acc = f"{clean_acc[:4]}-{clean_acc[4:]}"
+        else:
+            formatted_acc = "3043-6536-01"
+            
+        user_name = getattr(settings, "MERITZ_USER_NAME", "심재한")
+        prod_name = "Super365"
+        
+        with c_acc:
+            acc_bar_html = f"""
+            <div style="display: flex; align-items: center; gap: 12px; background: #ffffff; padding: 10px 16px; border: 1px solid #e2e4e8; border-radius: 6px; margin-bottom: 12px; flex-wrap: wrap;">
+                <div style="font-size: 1.35rem; font-weight: 700; color: #222; margin-right: 15px;">MY 계좌평가</div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-weight: 600; font-size: 0.9rem; color: #333;">계좌번호</span>
+                    <span style="background: #f1f3f5; border: 1px solid #ced4da; padding: 4px 10px; border-radius: 4px; font-weight: 600; font-size: 0.9rem; color: #111;">
+                        {formatted_acc} <span style="font-size: 0.75rem; color: #666;">▼</span>
+                    </span>
+                </div>
+                <div style="background: #e9ecef; border: 1px solid #ced4da; padding: 4px 12px; border-radius: 4px; font-weight: 600; font-size: 0.88rem; color: #333;">
+                    {user_name}
+                </div>
+                <div style="background: #f8f9fa; border: 1px solid #dee2e6; padding: 4px 14px; border-radius: 4px; font-size: 0.88rem; color: #495057;">
+                    {prod_name}
+                </div>
+            </div>
+            """
+            st.markdown("\n".join(l.strip() for l in acc_bar_html.splitlines()), unsafe_allow_html=True)
+        with c_btn:
+            # 메리츠 HTS 골드/브라운 톤 조회 버튼
+            if st.button("조회", key="btn_refresh_my_account", use_container_width=True):
+                fetch_meritz_account_data(force=True)
+                st.rerun()
+
+        # 데이터 조회
+        val_data, hld_data = fetch_meritz_account_data(force=False)
+        
+        # 1. 계좌자산평가액 섹션
+        st.markdown("<div style='font-size: 0.95rem; font-weight: 700; color: #9c6c29; margin-top: 6px; margin-bottom: 6px;'>◆ 계좌자산평가액</div>", unsafe_allow_html=True)
+        
+        tfam = val_data.get("tfam", 0)
+        d2_aft_tfam = val_data.get("d2_aft_tfam", 0)
+        frcr_tfam = val_data.get("frcr_tfam", 0)
+        mksc_vltn_amt = val_data.get("mksc_vltn_amt", 0)
+        vltn_amt = val_data.get("vltn_amt", 0)
+        loan_amt = val_data.get("loan_amt", 0)
+        aset_vltn_amt = val_data.get("aset_vltn_amt", 0)
+        
+        val_html = f"""<div style="overflow-x: auto; margin-bottom: 4px;">
+<table style="width: 100%; border-collapse: collapse; text-align: right; font-size: 0.88rem; border-top: 2px solid #8d775f; border-bottom: 1px solid #dcdcdc;">
+<thead>
+<tr style="background: #f5f4f0; color: #222; font-weight: 700; border-bottom: 1px solid #dcdcdc; height: 38px;">
+<th style="padding: 6px 12px; text-align: center; border-right: 1px solid #e7e6e2;">원화예수금<br>(D일)</th>
+<th style="padding: 6px 12px; text-align: center; border-right: 1px solid #e7e6e2;">원화예수금<br>(D+2)</th>
+<th style="padding: 6px 12px; text-align: center; border-right: 1px solid #e7e6e2;">외화예수금</th>
+<th style="padding: 6px 12px; text-align: center; border-right: 1px solid #e7e6e2;">유가증권평가액</th>
+<th style="padding: 6px 12px; text-align: center; border-right: 1px solid #e7e6e2;">총평가액</th>
+<th style="padding: 6px 12px; text-align: center; border-right: 1px solid #e7e6e2;">대출금액</th>
+<th style="padding: 6px 12px; text-align: center;">순자산평가액</th>
+</tr>
+</thead>
+<tbody>
+<tr style="height: 42px; background: #ffffff; font-weight: 600; color: #111;">
+<td style="padding: 6px 14px; border-right: 1px solid #f0f0f0;">{int(tfam):,}</td>
+<td style="padding: 6px 14px; border-right: 1px solid #f0f0f0;">{int(d2_aft_tfam):,}</td>
+<td style="padding: 6px 14px; border-right: 1px solid #f0f0f0;">{int(frcr_tfam):,}</td>
+<td style="padding: 6px 14px; border-right: 1px solid #f0f0f0;">{int(mksc_vltn_amt):,}</td>
+<td style="padding: 6px 14px; border-right: 1px solid #f0f0f0;">{int(vltn_amt):,}</td>
+<td style="padding: 6px 14px; border-right: 1px solid #f0f0f0;">{int(loan_amt):,}</td>
+<td style="padding: 6px 14px;">{int(aset_vltn_amt):,}</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div style="font-size: 0.78rem; color: #777; margin-bottom: 18px; margin-top: 4px;">
+※ 총평가액에 ELB/DLB 청약금액 및 외화증거금 포함
+</div>"""
+        st.markdown(val_html, unsafe_allow_html=True)
+        
+        # 2. 보유잔고내역 섹션 (스크린샷 2 2행 1레코드 구조)
+        st.markdown("<div style='font-size: 0.95rem; font-weight: 700; color: #9c6c29; margin-bottom: 6px;'>◆ 보유잔고내역</div>", unsafe_allow_html=True)
+        
+        rows_list = []
+        if not hld_data:
+            rows_list.append("""<tr><td colspan="7" style="text-align: center; padding: 25px; color: #888;">보유 잔고가 없습니다.</td></tr>""")
+        else:
+            for idx, item in enumerate(hld_data):
+                bg_color = "#ffffff" if idx % 2 == 0 else "#fafafa"
+                
+                # 1행 항목
+                mksc_cls_name = item.get("mksc_cls_name", "해외주식") or "해외주식"
+                rmnd_qty = int(safe_float(item.get("rmnd_qty", 0)))
+                psnt_prc = safe_float(item.get("psnt_prc", 0))
+                vltn_amt_item = int(safe_float(item.get("vltn_amt", 0)))
+                ert = safe_float(item.get("ert", 0))
+                byov_date = item.get("byov_date", "") or ""
+                loan_mtrt_date = item.get("loan_mtrt_date", "") or ""
+                
+                # 2행 항목
+                isnm = item.get("isnm", "")
+                byng_unpr = safe_float(item.get("byng_unpr", 0))
+                prdy_clpr_vrss = safe_float(item.get("prdy_clpr_vrss", 0))
+                vltn_prls_amt = int(safe_float(item.get("vltn_prls_amt", 0)))
+                iscd = item.get("iscd", "")
+                mtrt_date = item.get("mtrt_date", "") or ""
+                loan_amt_item = int(safe_float(item.get("loan_amt", 0)))
+                
+                # 색상 결정
+                ert_color = "#1976d2" if ert < 0 else ("#d32f2f" if ert > 0 else "#333")
+                vrss_color = "#1976d2" if prdy_clpr_vrss < 0 else ("#d32f2f" if prdy_clpr_vrss > 0 else "#333")
+                prls_color = "#1976d2" if vltn_prls_amt < 0 else ("#d32f2f" if vltn_prls_amt > 0 else "#333")
+                
+                rows_list.append(f"""<tr style="background: {bg_color}; border-top: 1px solid #eaeaea; height: 34px;">
+<td style="padding: 6px 12px; text-align: left; border-right: 1px solid #f0f0f0; color: #333;">{mksc_cls_name}</td>
+<td style="padding: 6px 12px; text-align: right; border-right: 1px solid #f0f0f0; font-weight: 600;">{rmnd_qty:,}</td>
+<td style="padding: 6px 12px; text-align: right; border-right: 1px solid #f0f0f0;">{psnt_prc:,.2f}</td>
+<td style="padding: 6px 12px; text-align: right; border-right: 1px solid #f0f0f0; font-weight: 600;">{vltn_amt_item:,}</td>
+<td style="padding: 6px 12px; text-align: right; border-right: 1px solid #f0f0f0; color: {ert_color}; font-weight: 600;">{ert:+.2f}%</td>
+<td style="padding: 6px 12px; text-align: center; border-right: 1px solid #f0f0f0; color: #666;">{byov_date}</td>
+<td style="padding: 6px 12px; text-align: center; color: #666;">{loan_mtrt_date}</td>
+</tr>
+<tr style="background: {bg_color}; border-bottom: 1px solid #e0e0e0; height: 34px;">
+<td style="padding: 6px 12px; text-align: left; border-right: 1px solid #f0f0f0; font-weight: 600; color: #111;">{isnm}</td>
+<td style="padding: 6px 12px; text-align: right; border-right: 1px solid #f0f0f0;">{byng_unpr:,.2f}</td>
+<td style="padding: 6px 12px; text-align: right; border-right: 1px solid #f0f0f0; color: {vrss_color};">{prdy_clpr_vrss:+,.2f}</td>
+<td style="padding: 6px 12px; text-align: right; border-right: 1px solid #f0f0f0; color: {prls_color}; font-weight: 600;">{vltn_prls_amt:+,}</td>
+<td style="padding: 6px 12px; text-align: center; border-right: 1px solid #f0f0f0; color: #1a0dab; font-weight: 600;">{iscd}</td>
+<td style="padding: 6px 12px; text-align: center; border-right: 1px solid #f0f0f0; color: #666;">{mtrt_date}</td>
+<td style="padding: 6px 12px; text-align: right; color: #333;">{loan_amt_item:,}</td>
+</tr>""")
+
+        rows_html = "".join(rows_list)
+        hld_html = f"""<div style="overflow-x: auto; margin-bottom: 10px;">
+<table style="width: 100%; border-collapse: collapse; font-size: 0.88rem; border-top: 2px solid #8d775f; border-bottom: 1px solid #dcdcdc;">
+<thead>
+<tr style="background: #f5f4f0; color: #222; font-weight: 700; height: 32px; border-bottom: 1px solid #e5e5e5;">
+<th style="padding: 6px 12px; text-align: left; border-right: 1px solid #e7e6e2; width: 22%;">잔고구분</th>
+<th style="padding: 6px 12px; text-align: right; border-right: 1px solid #e7e6e2; width: 10%;">잔고수량</th>
+<th style="padding: 6px 12px; text-align: right; border-right: 1px solid #e7e6e2; width: 12%;">현재가</th>
+<th style="padding: 6px 12px; text-align: right; border-right: 1px solid #e7e6e2; width: 14%;">평가금액</th>
+<th style="padding: 6px 12px; text-align: right; border-right: 1px solid #e7e6e2; width: 12%;">손익률(%)</th>
+<th style="padding: 6px 12px; text-align: center; border-right: 1px solid #e7e6e2; width: 15%;">매수일</th>
+<th style="padding: 6px 12px; text-align: center; width: 15%;">대출만기일</th>
+</tr>
+<tr style="background: #f5f4f0; color: #222; font-weight: 700; height: 32px; border-bottom: 1px solid #dcdcdc;">
+<th style="padding: 6px 12px; text-align: left; border-right: 1px solid #e7e6e2;">종목명</th>
+<th style="padding: 6px 12px; text-align: right; border-right: 1px solid #e7e6e2;">매입가</th>
+<th style="padding: 6px 12px; text-align: right; border-right: 1px solid #e7e6e2;">전일비</th>
+<th style="padding: 6px 12px; text-align: right; border-right: 1px solid #e7e6e2;">평가손익</th>
+<th style="padding: 6px 12px; text-align: center; border-right: 1px solid #e7e6e2;">종목코드</th>
+<th style="padding: 6px 12px; text-align: center; border-right: 1px solid #e7e6e2;">만기일</th>
+<th style="padding: 6px 12px; text-align: right;">대출금액</th>
+</tr>
+</thead>
+<tbody>
+{rows_html}
+</tbody>
+</table>
+</div>"""
+        st.markdown(hld_html, unsafe_allow_html=True)
+
+# --- 모든 화면 상단에 기본 닫힌 상태로 배치 ---
+render_my_account_expander(ActiveBroker)
+
 # --- 시장별 현황 탭 --- (사이드바 선택에 따라 강조 및 필터링)
-# [수정] 활성 시장에 따라 탭 순서를 동적으로 변경하여 첫 번째 탭이 항상 활성 시장을 가리키도록 함
+# [수정] 활성 시장에 따라 탭 순서를 동적으로 변경하며 외환/환전 관리 탭 추가
 if market_code == "KR":
-    tab_names = ["✅ 🇰🇷 한국 주식 시장 현황", "🇺🇸 미국 주식 시장 현황", "🏁 종료된 전략 내역", "📈 손익분석", "⚙️ 설정"]
+    tab_names = ["✅ 🇰🇷 한국 주식 시장 현황", "🇺🇸 미국 주식 시장 현황", "💱 외환/환전 관리 (Forex)", "🏁 종료된 전략 내역", "📈 손익분석", "⚙️ 설정"]
     tabs = st.tabs(tab_names, key=f"market_tabs_{get_trade_mode().lower()}_{market_code.lower()}")
-    tab_kr, tab_us, tab_finished, tab_analysis, tab_settings = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4]
+    tab_kr, tab_us, tab_forex, tab_finished, tab_analysis, tab_settings = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5]
 else:
-    tab_names = ["✅ 🇺🇸 미국 주식 시장 현황", "🇰🇷 한국 주식 시장 현황", "🏁 종료된 전략 내역", "📈 손익분석", "⚙️ 설정"]
+    tab_names = ["✅ 🇺🇸 미국 주식 시장 현황", "🇰🇷 한국 주식 시장 현황", "💱 외환/환전 관리 (Forex)", "🏁 종료된 전략 내역", "📈 손익분석", "⚙️ 설정"]
     tabs = st.tabs(tab_names, key=f"market_tabs_{get_trade_mode().lower()}_{market_code.lower()}")
-    tab_us, tab_kr, tab_finished, tab_analysis, tab_settings = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4]
+    tab_us, tab_kr, tab_forex, tab_finished, tab_analysis, tab_settings = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5]
 
 
 @st.fragment(run_every=5)
@@ -1255,7 +1545,11 @@ def display_holdings_metrics_live(symbol, strategy_choice, market_code, strategy
             
     sync_interval = 300.0 if is_market_active else 3600.0
     
-    if 'live_account' not in st.session_state or st.session_state['live_account'].get('symbol') != symbol or (now_ts - st.session_state.get(last_auto_sync_key, 0) > sync_interval):
+    # 메리츠 일일 전산 점검 시간 (23:50 ~ 00:20 KST) 판별
+    kr_now_check = datetime.now(pytz.timezone('Asia/Seoul'))
+    is_maintenance = (kr_now_check.time() >= dtime(23, 50) or kr_now_check.time() < dtime(0, 20))
+
+    if not is_maintenance and ('live_account' not in st.session_state or st.session_state['live_account'].get('symbol') != symbol or (now_ts - st.session_state.get(last_auto_sync_key, 0) > sync_interval)):
         try:
             logger.info(f"🔄 [Auto-Sync] {symbol} {market_code} 실시간 잔고 자동 연동 및 동기화 실행")
             equity_res = ActiveBroker.get_account_equity(symbol)
@@ -1679,13 +1973,230 @@ def render_exchange_rate_expander(market_code: str = "US", key_suffix: str = "")
         except Exception as e:
             st.caption(f"환율 추이를 불러올 수 없습니다: {e}")
 
-            # [신규] 환율 변동 추이 그래프 (Expander)
-            render_exchange_rate_expander(market_code=market_code, key_suffix="analysis")
+def render_forex_tab():
+    """메리츠 실시간 외환 환전 및 관리 탭"""
+    st.subheader("💱 메리츠 외환 및 실시간 환전 관리 (Forex)")
+
+    # [이벤트 배너]
+    st.markdown("""
+    <div style="background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%); padding: 14px 18px; border-radius: 8px; color: white; margin-bottom: 1.2rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div>
+                <span style="font-size: 1.15rem; font-weight: 700;">🎉 메리츠증권 외환 환전 수수료 100% 우대 이벤트 진행 중</span><br>
+                <span style="font-size: 0.88rem; opacity: 0.9;">기본 스프레드(13.34원/USD) 100% 면제 ➔ <b>스프레드 0.00원</b>으로 실시간 환전 가능!</span>
+            </div>
+            <div style="background-color: rgba(255,255,255,0.22); padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 0.95rem;">
+                환율 우대 100% (No Spread)
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 1. 실시간 고시환율 & 적용환율 현황
+    fx_quote = None
+    market_quote = None
+    try:
+        fx_quote = forex_manager.get_applied_rate(direction="BUY", symbol="USD")
+        market_quote = forex_manager.get_market_rate(symbol="USD")
+    except Exception as e:
+        logger.error(f"[FX Tab] 환율 조회 오류: {e}")
+
+    cur_rate = fx_quote.get("applied_rate", 1334.95) if fx_quote else 1334.95
+    base_stnd_rate = market_quote.get("deal_stnd_exrt", 1348.50) if market_quote else 1348.50
+    diff_val = cur_rate - base_stnd_rate
+    pct_val = (diff_val / base_stnd_rate * 100) if base_stnd_rate > 0 else 0.0
+
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    with col_m1:
+        st.metric(
+            label="💵 실시간 적용환율 (1 USD)",
+            value=f"₩{cur_rate:,.2f}",
+            delta=f"{diff_val:+.2f}원 ({pct_val:+.2f}%)"
+        )
+    with col_m2:
+        st.metric(
+            label="외화 매수 환율 (KRW ➔ USD)",
+            value=f"₩{fx_quote.get('by_rate', cur_rate):,.2f}" if fx_quote else f"₩{cur_rate:,.2f}"
+        )
+    with col_m3:
+        st.metric(
+            label="외화 매도 환율 (USD ➔ KRW)",
+            value=f"₩{fx_quote.get('sl_rate', cur_rate):,.2f}" if fx_quote else f"₩{cur_rate:,.2f}"
+        )
+    with col_m4:
+        st.metric(
+            label="적용 스프레드 / 우대율",
+            value="0.00원 (100% 우대)"
+        )
+
+    st.caption(f"⏱️ 고시 기준시각: {fx_quote.get('exrt_stnd_time', 'N/A') if fx_quote else '실시간'} | 전일 매매기준환율: ₩{base_stnd_rate:,.2f}")
+
+    st.divider()
+
+    # 2. 계좌 예수금 현황
+    col_bal1, col_bal2 = st.columns(2)
+    krw_cash = 0.0
+    usd_cash = 0.0
+    frcr_krw_eval = 0.0
+    try:
+        from core.brokers.meritz_kr import MeritzKrBroker
+        from core.brokers.meritz_us import MeritzUsBroker
+        kb = MeritzKrBroker()
+        krw_cash = kb.get_cash_pool()
+    except Exception as e:
+        logger.error(f"[FX Tab] 원화예수금 조회 오류: {e}")
+    try:
+        ub = MeritzUsBroker()
+        usd_cash = ub.get_cash_pool()
+    except Exception as e:
+        logger.error(f"[FX Tab] 외화예수금 조회 오류: {e}")
+
+    # 자산평가(valuation) 캐시/API 연동하여 외화 원화평가액 및 잔고 보강
+    try:
+        val_data, _ = fetch_meritz_account_data(force=False)
+        if val_data:
+            frcr_krw_eval = float(val_data.get("frcr_tfam", 0.0))
+            if krw_cash <= 0:
+                krw_cash = float(val_data.get("tfam", 0.0))
+            if usd_cash <= 0 and frcr_krw_eval > 0 and cur_rate > 0:
+                usd_cash = round(frcr_krw_eval / cur_rate, 2)
+    except Exception as e:
+        logger.error(f"[FX Tab] 자산평가 연동 오류: {e}")
+
+    if frcr_krw_eval <= 0 and usd_cash > 0 and cur_rate > 0:
+        frcr_krw_eval = usd_cash * cur_rate
+
+    with col_bal1:
+        with st.container(border=True):
+            st.markdown("##### 🇰🇷 원화(KRW) 가용예수금")
+            st.markdown(f"<h2 style='color:#1e3c72; margin:0;'>₩{int(krw_cash):,}원</h2>", unsafe_allow_html=True)
+            max_buy_usd = (krw_cash / cur_rate) if cur_rate > 0 else 0
+            st.caption(f"현재 환율 기준 최대 환전 가능: **${max_buy_usd:,.2f}**")
+            
+    with col_bal2:
+        with st.container(border=True):
+            st.markdown("##### 🇺🇸 외화(USD) 가용예수금")
+            st.markdown(f"<h2 style='color:#2a5298; margin:0;'>${usd_cash:,.2f}</h2>", unsafe_allow_html=True)
+            st.caption(f"원화 환산 가치: **₩{int(frcr_krw_eval):,}원**")
+
+    # 3. 실시간 수동 환전 실행 영역
+    st.markdown("---")
+    st.subheader("⚡ 실시간 수동 환전 (Manual Exchange)")
+    with st.container(border=True):
+        col_fx_dir, col_fx_amt = st.columns([1.5, 2])
+        with col_fx_dir:
+            fx_direction = st.radio(
+                "환전 방향 선택",
+                ["원화 ➔ 외화 매수 (KRW → USD)", "외화 매도 ➔ 원화 회수 (USD → KRW)"],
+                key="manual_fx_direction_choice"
+            )
+            is_buy = "외화 매수" in fx_direction
+
+        with col_fx_amt:
+            if is_buy:
+                calc_mode = st.radio("입력 기준", ["달러($) 기준 입력", "원화(₩) 기준 입력"], horizontal=True, key="fx_input_mode_buy")
+                if calc_mode == "달러($) 기준 입력":
+                    input_usd = st.number_input("환전할 외화 금액 ($)", min_value=1.0, value=100.0, step=10.0, format="%.2f")
+                    est_krw = int(input_usd * cur_rate)
+                    st.info(f"💡 필요 원화 예상 금액: **약 {est_krw:,}원** (적용환율 ₩{cur_rate:,.2f})")
+                    req_usd, req_krw = input_usd, 0.0
+                else:
+                    input_krw = st.number_input("환전할 원화 금액 (₩)", min_value=10000, value=1000000, step=10000, format="%d")
+                    est_usd = (input_krw / cur_rate) if cur_rate > 0 else 0
+                    st.info(f"💡 수령 달러 예상 금액: **약 ${est_usd:,.2f}** (적용환율 ₩{cur_rate:,.2f})")
+                    req_usd, req_krw = 0.0, float(input_krw)
+            else:
+                default_sell_val = min(float(usd_cash), 100.0) if usd_cash >= 1.0 else (usd_cash if usd_cash > 0 else 1.0)
+                input_usd_sell = st.number_input(
+                    "환전(매도)할 외화 금액 ($)",
+                    min_value=0.1 if usd_cash > 0 else 1.0,
+                    value=default_sell_val,
+                    step=10.0,
+                    format="%.2f"
+                )
+                est_krw_sell = int(input_usd_sell * cur_rate)
+                st.info(f"💡 원화 입금 예상 금액: **약 {est_krw_sell:,}원** (적용환율 ₩{cur_rate:,.2f})")
+                if usd_cash > 0 and input_usd_sell > usd_cash:
+                    st.warning(f"⚠️ 현재 보유 외화 예수금(${usd_cash:,.2f})보다 큰 금액이 입력되었습니다.")
+                req_usd, req_krw = input_usd_sell, 0.0
+
+        st.caption("※ 실거래 시 메리츠 100% 우대 스프레드가 적용되어 고시된 적용환율 그대로 환전됩니다.")
+        
+        col_exec1, col_exec2 = st.columns([1, 2])
+        with col_exec1:
+            confirm_check = st.checkbox("환전 내용 확인 및 실행 동의", key="fx_confirm_chk")
+        with col_exec2:
+            if st.button("💱 실시간 환전 실행", type="primary", disabled=not confirm_check, width='stretch'):
+                dir_param = "BUY" if is_buy else "SELL"
+                dir_label = "원화 ➔ USD 외화매수" if is_buy else "USD ➔ 원화 외화매도"
+                with st.spinner(f"메리츠 {dir_label} 환전 처리 중..."):
+                    ok = forex_manager.execute_exchange(
+                        direction=dir_param,
+                        amount_usd=req_usd,
+                        amount_krw=req_krw,
+                        note="대시보드 수동 환전"
+                    )
+                    if ok:
+                        st.success(f"✅ {dir_label} 환전이 성공적으로 완료되었습니다!")
+                        time.sleep(1.5)
+                        st.rerun()
+                    else:
+                        st.error("❌ 환전 요청이 실패하였습니다. 시스템 로그를 확인하세요.")
+
+    # 4. 스마트 자동 환전 (CAVR Auto-Funding) 운영 설정
+    st.markdown("---")
+    st.subheader("🤖 스마트 자동 환전 운영 정책 (CAVR Auto-Funding)")
+    with st.container(border=True):
+        col_set1, col_set2 = st.columns(2)
+        with col_set1:
+            cur_fx_auto = get_config("FX_MODE", "AUTO" if getattr(settings, "FX_AUTO_EXCHANGE", True) else "MANUAL") == "AUTO"
+            toggle_auto_fx = st.toggle("미국 주식 매수 시 달러 부족분 자동 환전 (Auto-Funding)", value=cur_fx_auto)
+            buf_usd = st.number_input("자동 충전 시 여유 버퍼 ($)", min_value=0.0, value=float(get_config("FX_BUFFER_USD", "10.0")), step=5.0)
+        with col_set2:
+            cur_harvest = get_config("FX_HARVEST_ENABLED", "true") == "true"
+            toggle_harvest = st.toggle("미국 주식 익절 매도 후 원화 자동 회수 (Profit-Harvesting)", value=cur_harvest)
+            harvest_ratio = st.slider("수익금 원화 환전 회수 비율 (%)", min_value=10, max_value=100, value=int(get_config("FX_HARVEST_RATIO", "100")), step=10)
+        
+        if st.button("💾 자동 환전 운영 정책 저장", type="primary"):
+            new_mode_str = "AUTO" if toggle_auto_fx else "MANUAL"
+            set_config("FX_MODE", new_mode_str)
+            set_config("FX_BUFFER_USD", f"{buf_usd:.2f}")
+            set_config("FX_HARVEST_ENABLED", "true" if toggle_harvest else "false")
+            set_config("FX_HARVEST_RATIO", str(harvest_ratio))
+            settings.FX_AUTO_EXCHANGE = toggle_auto_fx
+            st.success("✅ 외환 운영 정책이 저장되었습니다.")
+            time.sleep(1)
+            st.rerun()
+
+    # 5. 환전 체결 이력 테이블
+    st.markdown("---")
+    st.subheader("📜 실시간 환전 체결 기록 (Forex History)")
+    forex_records = get_forex_history_db(limit=50)
+    if not forex_records:
+        st.info("💡 아직 환전 체결 기록이 없습니다. (자동 또는 수동 환전 시 실시간 기록됩니다)")
+    else:
+        df_fx = pd.DataFrame(forex_records)
+        disp_cols = ["created_at", "direction", "applied_rate", "wncr_amt", "frcr_amt", "fee", "spread", "tr_srno", "note"]
+        avail_cols = [c for c in disp_cols if c in df_fx.columns]
+        df_fx_disp = df_fx[avail_cols].rename(columns={
+            "created_at": "환전 일시",
+            "direction": "구분",
+            "applied_rate": "적용 환율(원)",
+            "wncr_amt": "원화 금액",
+            "frcr_amt": "외화 금액",
+            "fee": "수수료",
+            "spread": "스프레드",
+            "tr_srno": "거래번호",
+            "note": "비고"
+        })
+        st.dataframe(df_fx_disp, width='stretch')
 
 with tab_us:
     render_market_tab("US")
 with tab_kr:
     render_market_tab("KR")
+with tab_forex:
+    render_forex_tab()
 with tab_finished:
     st.subheader("🏁 종료된 전략 이력 관리")
     finished_rows = get_finished_states_db()
@@ -1970,6 +2481,25 @@ def display_realtime_header():
             # [ADD] 미국 시장인 경우 운영 시간 외라도 환율 메트릭 및 환율 그래프 표시
             if market_code == "US":
                 usd_krw = float(get_config("USDKRW", "0.00"))
+                if usd_krw <= 0:
+                    latest_rec = get_latest_exchange_rate_db()
+                    if latest_rec and latest_rec.get("rate", 0) > 0:
+                        usd_krw = float(latest_rec["rate"])
+                        set_config("USDKRW", f"{usd_krw:.2f}")
+                        set_config("USDKRW_DIFF", f"{latest_rec.get('diff', 0.0):+.2f}")
+                        set_config("USDKRW_PCT", f"{latest_rec.get('pct', 0.0):+.2f}")
+                        set_config("USDKRW_UPDATE_TIME", latest_rec.get("recorded_at", "N/A"))
+                    else:
+                        try:
+                            live_fx = ActiveBroker.get_exchange_rate(force=True)
+                            if live_fx and live_fx.get("rate", 0) > 0:
+                                usd_krw = float(live_fx["rate"])
+                                set_config("USDKRW", f"{usd_krw:.2f}")
+                                set_config("USDKRW_DIFF", f"{live_fx.get('diff', 0.0):+.2f}")
+                                set_config("USDKRW_PCT", f"{live_fx.get('pct', 0.0):+.2f}")
+                                set_config("USDKRW_UPDATE_TIME", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                        except Exception:
+                            pass
                 usd_diff = float(get_config("USDKRW_DIFF", "0.00"))
                 usd_pct = float(get_config("USDKRW_PCT", "0.00"))
                 delta_fx = f"{usd_diff:+.2f}원 ({usd_pct:+.2f}%)"
@@ -1979,12 +2509,23 @@ def display_realtime_header():
                 col1.metric(label="환율 (정규장 개장 09:30 ET 기준)", value=f"₩{usd_krw:,.2f}", delta=delta_fx)
                 with col1:
                     st.caption(f"기준: 전일 개장 대비 | {fx_time}")
-                    if st.button("🔄 지금 환율 조회", key="manual_fx_update_inactive", help="현재 실시간 환율을 조회하여 임시 표시합니다. (공식 개장 환율 DB 미변경)"):
+                    if st.button("🔄 지금 환율 조회", key="manual_fx_update_inactive", help="메리츠 실시간 적용환율을 즉시 조회하여 화면 및 시스템에 갱신합니다."):
                         with st.spinner("실시간 환율 조회 중..."):
                             live_info = ActiveBroker.get_exchange_rate(force=True)
+                            cur_rate = float(live_info.get("rate", 0.0))
+                            cur_diff = float(live_info.get("diff", 0.0))
+                            cur_pct = float(live_info.get("pct", 0.0))
+                            now_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            if cur_rate > 0:
+                                set_config("USDKRW", f"{cur_rate:.2f}")
+                                set_config("USDKRW_DIFF", f"{cur_diff:+.2f}")
+                                set_config("USDKRW_PCT", f"{cur_pct:+.2f}")
+                                set_config("USDKRW_UPDATE_TIME", now_time_str)
                             st.session_state["manual_live_fx"] = {
-                                "rate": live_info.get("rate", 0.0),
-                                "time": datetime.now().strftime("%H:%M:%S"),
+                                "rate": cur_rate,
+                                "diff": cur_diff,
+                                "pct": cur_pct,
+                                "time": live_info.get("time", datetime.now().strftime("%H:%M:%S")),
                                 "source": live_info.get("source", "MERITZ")
                             }
                         st.rerun()
@@ -1993,7 +2534,7 @@ def display_realtime_header():
                 
                 if "manual_live_fx" in st.session_state and st.session_state["manual_live_fx"].get("rate", 0) > 0:
                     lfx = st.session_state["manual_live_fx"]
-                    st.info(f"🔍 **실시간 환율 (임시 조회)**: 1$ = **₩{lfx['rate']:,.2f}** (조회 시각: {lfx['time']}, 출처: {lfx['source']}) — *공식 개장 환율 DB는 변경되지 않습니다.*")
+                    st.info(f"🔍 **실시간 환율**: 1$ = **₩{lfx['rate']:,.2f}** ({lfx.get('diff', 0):+.2f}원, {lfx.get('pct', 0):+.2f}%) (기준 시각: {lfx['time']}, 출처: {lfx['source']})")
 
                 # 환율 변동 추이 그래프 (Expander)
                 render_exchange_rate_expander(market_code="US", key_suffix="inactive_header")
@@ -2021,6 +2562,14 @@ def display_realtime_header():
                 
                 if market_code == "US":
                     usd_krw = float(get_config("USDKRW", "0.00"))
+                    if usd_krw <= 0:
+                        latest_rec = get_latest_exchange_rate_db()
+                        if latest_rec and latest_rec.get("rate", 0) > 0:
+                            usd_krw = float(latest_rec["rate"])
+                            set_config("USDKRW", f"{usd_krw:.2f}")
+                            set_config("USDKRW_DIFF", f"{latest_rec.get('diff', 0.0):+.2f}")
+                            set_config("USDKRW_PCT", f"{latest_rec.get('pct', 0.0):+.2f}")
+                            set_config("USDKRW_UPDATE_TIME", latest_rec.get("recorded_at", "N/A"))
                     usd_diff = float(get_config("USDKRW_DIFF", "0.00"))
                     usd_pct = float(get_config("USDKRW_PCT", "0.00"))
                     delta_fx = f"{usd_diff:+.2f}원 ({usd_pct:+.2f}%)"
@@ -2030,12 +2579,23 @@ def display_realtime_header():
                     col2.metric(label="환율 (정규장 개장 09:30 ET 기준)", value=f"₩{usd_krw:,.2f}", delta=delta_fx)
                     with col2:
                         st.caption(f"기준: 전일 개장 대비 | {fx_time}")
-                        if st.button("🔄 지금 환율 조회", key="manual_fx_update", help="현재 실시간 환율을 조회하여 임시 표시합니다. (공식 개장 환율 DB 미변경)"):
+                        if st.button("🔄 지금 환율 조회", key="manual_fx_update", help="메리츠 실시간 적용환율을 즉시 조회하여 화면 및 시스템에 갱신합니다."):
                             with st.spinner("실시간 환율 조회 중..."):
                                 live_info = ActiveBroker.get_exchange_rate(force=True)
+                                cur_rate = float(live_info.get("rate", 0.0))
+                                cur_diff = float(live_info.get("diff", 0.0))
+                                cur_pct = float(live_info.get("pct", 0.0))
+                                now_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                if cur_rate > 0:
+                                    set_config("USDKRW", f"{cur_rate:.2f}")
+                                    set_config("USDKRW_DIFF", f"{cur_diff:+.2f}")
+                                    set_config("USDKRW_PCT", f"{cur_pct:+.2f}")
+                                    set_config("USDKRW_UPDATE_TIME", now_time_str)
                                 st.session_state["manual_live_fx"] = {
-                                    "rate": live_info.get("rate", 0.0),
-                                    "time": datetime.now().strftime("%H:%M:%S"),
+                                    "rate": cur_rate,
+                                    "diff": cur_diff,
+                                    "pct": cur_pct,
+                                    "time": live_info.get("time", datetime.now().strftime("%H:%M:%S")),
                                     "source": live_info.get("source", "MERITZ")
                                 }
                             st.rerun()
@@ -2044,7 +2604,7 @@ def display_realtime_header():
                     
                     if "manual_live_fx" in st.session_state and st.session_state["manual_live_fx"].get("rate", 0) > 0:
                         lfx = st.session_state["manual_live_fx"]
-                        st.info(f"🔍 **실시간 환율 (임시 조회)**: 1$ = **₩{lfx['rate']:,.2f}** (조회 시각: {lfx['time']}, 출처: {lfx['source']}) — *공식 개장 환율 DB는 변경되지 않습니다.*")
+                        st.info(f"🔍 **실시간 환율**: 1$ = **₩{lfx['rate']:,.2f}** ({lfx.get('diff', 0):+.2f}원, {lfx.get('pct', 0):+.2f}%) (기준 시각: {lfx['time']}, 출처: {lfx['source']})")
 
                     # [신규] 환율 변동 추이 그래프 (Expander)
                     render_exchange_rate_expander(market_code="US", key_suffix="live_header")

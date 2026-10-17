@@ -45,7 +45,7 @@ def send(body, confirm_token):
 
 if __name__ == "__main__":
     # 주문의 종목코드는 "A" + 6자리다. 시세(005930)와 다르다.
-    body = {"iscd": "A005930", "odqt": "1", "oder_unpr": "50000",
+    body = {"iscd": "A005930", "odqt": "1", "oder_unpr": "273000",
             "oder_cls_code": "01",       # 01 지정가 / 05 시장가
             "oder_cond_cls_code": "0",   # 0 일반 / 3 IOC / 4 FOK
             "orgl_oder_no": "0",         # 신규에는 원주문이 없다

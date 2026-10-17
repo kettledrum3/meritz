@@ -523,7 +523,7 @@ def job_heartbeat():
 # ==============================================================================
 
 def job_update_exchange_rate(broker=None, force=False, is_market_open=False):
-    """메리츠 외환 관리자를 사용하여 고시환율을 조회하고 DB에 저장"""
+    """메리츠 외환 관리자를 사용하여 실시간 고시환율을 조회하고 DB에 저장"""
     try:
         from core.database import (
             save_exchange_rate_db,
@@ -531,19 +531,20 @@ def job_update_exchange_rate(broker=None, force=False, is_market_open=False):
             get_previous_exchange_rate_db,
             set_config
         )
-        rate_info = forex_manager.get_market_rate(symbol="USD", force_refresh=force)
-        if not rate_info:
-            logger.warning("⚠️ [FX 갱신] 고시환율 정보를 가져오지 못했습니다.")
+        if broker is None:
+            broker = get_us_broker()
+
+        fx_info = broker.get_exchange_rate(force=force)
+        if not fx_info or fx_info.get("rate", 0) <= 0:
+            logger.warning("⚠️ [FX 갱신] 환율 정보를 가져오지 못했습니다.")
             return None
 
-        rate = float(rate_info.get("deal_stnd_exrt") or rate_info.get("stnd_exrt") or 0.0)
+        rate = float(fx_info["rate"])
+        diff = float(fx_info.get("diff", 0.0))
+        pct = float(fx_info.get("pct", 0.0))
+        base_rate = float(fx_info.get("base_rate", rate - diff))
         trade_date = datetime.now(KST).strftime("%Y-%m-%d")
         now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
-
-        prev_record = get_previous_exchange_rate_db(trade_date)
-        base_rate = prev_record["rate"] if prev_record and prev_record.get("rate") else float(rate_info.get("stnd_exrt") or rate)
-        diff = rate - base_rate
-        pct = (diff / base_rate * 100.0) if base_rate > 0 else 0.0
 
         set_config("USDKRW", f"{rate:.2f}")
         set_config("USDKRW_DIFF", f"{diff:+.2f}")
@@ -557,7 +558,7 @@ def job_update_exchange_rate(broker=None, force=False, is_market_open=False):
             base_rate=base_rate,
             diff=diff,
             pct=pct,
-            source="MERITZ_FOREX"
+            source=fx_info.get("source", "MERITZ_FOREX")
         )
         logger.info(f"💱 [FX 갱신] USD/KRW = {rate:,.2f}원 ({diff:+.2f}원, {pct:+.2f}%)")
         return {"rate": rate, "diff": diff, "pct": pct}

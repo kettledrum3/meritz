@@ -39,6 +39,7 @@ code = body.get("rsp_cd")
 |---|---|---|
 | `0000` | 정상 | 시세 계열 |
 | `0001` | 주문 접수 | **체결이 아닙니다.** `data.warn_cls_code` 를 함께 보십시오 |
+| `5620` | 예약 주문 접수 | **체결이 아닙니다.** 같은 예약을 다시 보내지 마십시오(중복 접수됩니다) |
 | `5762` | 다음 페이지 있음 | 오류가 아닙니다. `tr_cont`·`tr_cont_key` 로 이어 조회 |
 | `5766` | 조회 완료 | 계좌·주문 조회 계열 |
 | `5820` | 조회할 자료 없음 | **자료가 있어도 이 코드가 오는 API 가 있습니다.** 아래 참조 |
@@ -108,7 +109,7 @@ if not rows:
   바꿔 넣으면 오류 없이 0건이 옵니다
 - **연속조회 키 훼손** — `tr_cont_key` 는 오른쪽에 공백이 붙어 옵니다. 잘라내면
   다른 구간을 받거나 같은 페이지를 무한 반복합니다. 연속조회가 실제로 동작하는 API 는
-  `transactions` · `orders/history` · 해외 `orders/history` · 해외 `exchanges` 네 건뿐입니다
+  `transactions` · `orders/history` · 해외 `orders/history` · 해외 `exchanges` · `me/holdings` · `me/overseas/holdings` 여섯 건뿐입니다
 - **국내 시세 `rsp_cd` 손상** — 국내 시세 일부는 `rsp_cd` 에 제어문자가 섞여 옵니다.
   데이터는 정상이지만 업무 성공 여부를 코드로 판정할 수 없습니다.
   대상은 [`corrections.json`](../meritz/data/corrections.json) 에 있습니다

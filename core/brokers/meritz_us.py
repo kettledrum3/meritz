@@ -50,6 +50,15 @@ EXCHANGE_CODE_MAP = {
 }
 
 
+def is_meritz_maintenance_time() -> bool:
+    """메리츠증권 계좌 원장 일일 정산 점검 시간 (23:50 ~ 00:20 KST) 여부"""
+    from datetime import datetime, time as dtime
+    import pytz
+    kr_now = datetime.now(pytz.timezone("Asia/Seoul"))
+    t = kr_now.time()
+    return t >= dtime(23, 50) or t < dtime(0, 20)
+
+
 class MeritzUsBroker(Broker):
     """메리츠증권 해외주식(미국) 브로커 구현체"""
 
@@ -70,13 +79,21 @@ class MeritzUsBroker(Broker):
 
     def _call(self, key: str, params: dict) -> dict:
         """카탈로그 키 기반 API 호출 공통 헬퍼"""
+        # 점검 시간대에 계좌/주문 관련 API 호출 시도 시 조용히 처리
+        if is_meritz_maintenance_time() and key in ("ovs_holdings", "ovs_currencies", "ovs_orders_estimate", "valuation", "deposit", "orders_buy", "orders_sell"):
+            logger.warning(f"⚠️ [Meritz US] 일일 전산 점검 시간 (23:50 ~ 00:15) 중이므로 [{key}] 호출을 건너뜁니다.")
+            return {}
+
         api_spec = self.cat.get(key)
         if not api_spec:
             raise ValueError(f"카탈로그에서 해외 API 키를 찾을 수 없습니다: {key}")
         res = self.client.call(api_spec, params)
         if not res.get("ok"):
             err_msg = f"[{key}] 호출 실패: {res.get('error')} - {res.get('message')}"
-            logger.error(err_msg)
+            if "서비스 가능시간이 아닙니다" in str(res.get("message")):
+                logger.warning(f"⚠️ [Meritz US] 증권사 점검 시간 (23:50 ~ 00:15): {res.get('message')}")
+            else:
+                logger.error(err_msg)
             raise RuntimeError(err_msg)
         body = res.get("body", {})
         return body.get("data") or {}
@@ -210,18 +227,45 @@ class MeritzUsBroker(Broker):
     def get_cash_pool(self) -> float:
         """외화(USD) 주문가능 예수금 조회"""
         try:
+            # 1. 외화통화별 예수금 조회 (ovs_currencies)
             currencies = self._call("ovs_currencies", {})
             rows = currencies if isinstance(currencies, list) else [currencies]
             for row in rows:
+                if not isinstance(row, dict):
+                    continue
                 crcd = (row.get("crcd") or row.get("crnc_code") or "").upper()
                 if crcd == "USD":
-                    cash = row.get("frcr_dncl_amt") or row.get("ord_psbl_frcr_amt") or row.get("dpst_amt")
+                    cash = row.get("frcr_amt") or row.get("estm_frcr_amt") or row.get("stnd_deps_camt") or row.get("frcr_dncl_amt") or row.get("ord_psbl_frcr_amt")
                     if cash is not None:
-                        return float(cash)
-            # 폴백: 주문가능금액 조회 시도
+                        val = float(cash)
+                        if val > 0:
+                            return val
+
+            # 2. 폴백: 주문가능금액 조회 (ovs_orders_estimate)
             est = self._call("ovs_orders_estimate", {"intg_marg_iqry_yn": "N"})
-            if isinstance(est, dict) and "ord_psbl_frcr_amt" in est:
-                return float(est["ord_psbl_frcr_amt"])
+            est_rows = est if isinstance(est, list) else ([est] if isinstance(est, dict) else [])
+            for er in est_rows:
+                if not isinstance(er, dict):
+                    continue
+                crcd = (er.get("crcd") or "").upper()
+                if crcd in ("USD", ""):
+                    cash = er.get("oder_crnc_oder_able_camt") or er.get("frcr_amt") or er.get("stnd_deps_camt") or er.get("ord_psbl_frcr_amt")
+                    if cash is not None:
+                        val = float(cash)
+                        if val > 0:
+                            return val
+
+            # 3. 폴백: 자산평가(valuation)의 frcr_tfam (원화 환산액) -> 환율 역산
+            val_data = self._call("valuation", {})
+            if isinstance(val_data, dict):
+                frcr_tfam = float(val_data.get("frcr_tfam", 0.0))
+                if frcr_tfam > 0:
+                    exrt = 1348.5  # 기본 환율
+                    for r in rows:
+                        if isinstance(r, dict) and r.get("vltn_exrt"):
+                            exrt = float(r["vltn_exrt"])
+                            break
+                    return round(frcr_tfam / exrt, 2)
         except Exception as e:
             logger.error(f"[Meritz US] 외화예수금 조회 실패: {e}")
         return 0.0
@@ -311,28 +355,61 @@ class MeritzUsBroker(Broker):
         return {"prdt_name": symbol, "prdt_clsf_name": "해외(미국)주식", "ivst_prdt_type_cd_name": "ETF/주식"}
 
     def get_exchange_rate(self, force: bool = False) -> dict:
-        """실시간 고시환율 조회 (MeritzForexManager 연계)"""
+        """실시간 고시환율/적용환율 조회 (MeritzForexManager 연계)"""
         try:
             from core.forex import forex_manager
-            from core.database import get_previous_exchange_rate_db
+            from core.database import get_previous_exchange_rate_db, get_latest_exchange_rate_db
+
+            # 1. 실시간 적용환율 (외화매수 기준, 최신 시각 반영) 우선 조회
+            quote = forex_manager.get_applied_rate(direction="BUY", symbol="USD")
+            if quote and quote.get("applied_rate", 0) > 0:
+                market_rate = float(quote["applied_rate"])
+                trade_date = quote.get("pros_date", datetime.now().strftime("%Y%m%d"))
+                prev_record = get_previous_exchange_rate_db(trade_date)
+                if prev_record and prev_record.get("rate"):
+                    base_rate = float(prev_record["rate"])
+                else:
+                    # DB에 전일 레코드가 없으면 market_rate 또는 고시 매매기준율 사용
+                    market_info = forex_manager.get_market_rate(symbol="USD", force_refresh=force)
+                    base_rate = float(market_info.get("deal_stnd_exrt", 0.0)) if market_info else market_rate
+                    if base_rate <= 0:
+                        base_rate = market_rate
+
+                diff = market_rate - base_rate
+                pct = (diff / base_rate * 100.0) if base_rate > 0 else 0.0
+                return {
+                    "rate": market_rate,
+                    "base_rate": base_rate,
+                    "diff": diff,
+                    "pct": pct,
+                    "time": quote.get("exrt_stnd_time", datetime.now().strftime("%H:%M:%S")),
+                    "source": "MERITZ_APPLIED"
+                }
+
+            # 2. 고시환율 조회 fallback (당일 기준환율 stnd_exrt 우선)
             rate_info = forex_manager.get_market_rate(symbol="USD", force_refresh=force)
             if rate_info:
-                market_rate = float(rate_info.get("deal_stnd_exrt") or rate_info.get("stnd_exrt") or 0.0)
+                stnd_exrt = float(rate_info.get("stnd_exrt", 0.0))
+                deal_stnd_exrt = float(rate_info.get("deal_stnd_exrt", 0.0))
+                market_rate = stnd_exrt if stnd_exrt > 0 else deal_stnd_exrt
+                
                 if market_rate > 0:
                     trade_date = rate_info.get("date", datetime.now().strftime("%Y%m%d"))
                     prev_record = get_previous_exchange_rate_db(trade_date)
-                    base_rate = prev_record["rate"] if prev_record and prev_record.get("rate") else float(rate_info.get("stnd_exrt") or market_rate)
+                    base_rate = float(prev_record["rate"]) if prev_record and prev_record.get("rate") else (deal_stnd_exrt if deal_stnd_exrt > 0 else market_rate)
                     diff = market_rate - base_rate
                     pct = (diff / base_rate * 100.0) if base_rate > 0 else 0.0
                     return {
                         "rate": market_rate,
+                        "base_rate": base_rate,
                         "diff": diff,
                         "pct": pct,
+                        "time": rate_info.get("hour", datetime.now().strftime("%H:%M:%S")),
                         "source": "MERITZ_FOREX"
                     }
         except Exception as e:
             logger.error(f"[Meritz US] 환율 조회 실패: {e}")
-        return {"rate": 1330.0, "diff": 0.0, "pct": 0.0, "source": "FALLBACK"}
+        return {"rate": 1334.95, "diff": 0.0, "pct": 0.0, "source": "FALLBACK"}
 
     def fetch_daily_chart(self, symbol: str, days: int = 300) -> List[dict]:
         """미국 주식 일봉 시세 조회"""

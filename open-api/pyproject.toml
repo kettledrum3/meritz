@@ -1,6 +1,6 @@
 [project]
 name = "meritz-open-api-examples"
-version = "0.2.0"
+version = "0.2.1"
 description = "메리츠증권 Open API — Python 실행 예제"
 requires-python = ">=3.11"
 license = { text = "MIT" }

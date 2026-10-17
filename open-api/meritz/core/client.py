@@ -24,7 +24,7 @@ from .safety import check_confirm, is_state_changing, josa, preview
 RETRYABLE = {"EGW00200"}          # 초당 거래건수 초과
 # 토큰이 무효가 됐다는 신호. 캐시를 버리고 한 번 다시 받아야 한다.
 TOKEN_DEAD = {"EGW00121", "EGW00123"}
-OK_CODES = {"0000", "0001", "5762", "5766", "5820", "5822"}
+OK_CODES = {"0000", "0001", "5620", "5762", "5766", "5820", "5822"}
 # "자료 없음" 을 뜻하는 코드. **코드만으로 자료 없음을 단정하지 않는다** —
 # 게이트웨이가 자료를 담고도 5820 을 보내는 API 가 여럿이다(담보 현황·
 # 국내 실현손익(종목별)·해외 실현손익). 판정은 아래 _payload_is_empty() 가 한다.
@@ -347,9 +347,12 @@ class ApiClient:
         h = {"authorization": f"Bearer {self.tokens.get()}", "mac_address": mac_address()}
         if api.get("content_type"):
             h["content-type"] = api["content_type"]
+        # 연속조회 값은 명세가 쿼리스트링으로 선언한 API 에서는 쿼리로만 보낸다.
+        # 헤더로도 보내면 공백이 긴 키(예: 보유종목)를 방화벽이 막는다.
+        declared = {p["name"] for p in api.params if p.get("location") == "query"}
         for k in ("tr_cont", "tr_cont_key"):
             v = (extra or {}).get(k)
-            if v not in (None, ""):
+            if v not in (None, "") and k not in declared:
                 h[k] = str(v)
         return h
 
@@ -591,6 +594,10 @@ class ApiClient:
                 if code == "0001":
                     out["note"] = ("주문이 접수됐습니다. 접수 성공일 뿐 체결·수리 확정이 "
                                    "아닙니다. 주문내역 조회로 최종 상태를 확인하세요.")
+                elif code == "5620":
+                    out["note"] = ("예약 주문이 접수됐습니다. 접수 성공일 뿐 지정한 일자·시각에 "
+                                   "발주됩니다. 예약 주문 조회로 확인하시고, 같은 예약을 다시 "
+                                   "보내지 마십시오(중복 접수됩니다).")
                 elif code in NO_DATA_CODES:
                     # **코드가 아니라 data 로 판정한다.** 이 게이트웨이는 자료를
                     # 담고도 5820 을 보낸다(담보 현황·국내 실현손익(종목별)·
@@ -659,7 +666,7 @@ class ApiClient:
 # 연속조회가 **실제로 동작하는 것이 확인된** API.
 #
 # 카탈로그에서 tr_cont/tr_cont_key 를 선언한 API 는 13건이지만, 이어서 조회하면
-# 실제로 다음 구간이 오는 것은 아래 4건뿐이다. 나머지에 순회를 걸면
+# 실제로 다음 구간이 오는 것은 아래 6건뿐이다. 나머지에 순회를 걸면
 # 같은 구간을 반복하거나(무한 반복) 거짓 0건이 나온다. 그래서 화이트리스트로 둔다 —
 # 새 API 가 조용히 편승하지 못하게 하기 위해서다.
 PAGING_OK = frozenset({
@@ -667,6 +674,8 @@ PAGING_OK = frozenset({
     "orders_history",        # 국내 주문내역
     "ovs_orders_history",    # 해외 주문체결내역
     "ref_ovs_exchanges",     # 해외 거래소 목록
+    "holdings",              # 국내 보유종목 (30건씩, 키를 쿼리로 보낸다)
+    "ovs_holdings",          # 해외 보유종목 (30건씩, 키를 쿼리로 보낸다)
 })
 
 # 다음 페이지가 있다는 신호

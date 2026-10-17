@@ -26,6 +26,15 @@ from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+def is_meritz_maintenance_time() -> bool:
+    """메리츠증권 계좌 원장 일일 정산 점검 시간 (23:50 ~ 00:20 KST) 여부"""
+    from datetime import datetime, time as dtime
+    import pytz
+    kr_now = datetime.now(pytz.timezone("Asia/Seoul"))
+    t = kr_now.time()
+    return t >= dtime(23, 50) or t < dtime(0, 20)
+
+
 class MeritzKrBroker(Broker):
     """메리츠증권 국내주식 브로커 구현체 (Broker 인터페이스 준수)"""
 
@@ -41,13 +50,21 @@ class MeritzKrBroker(Broker):
 
     def _call(self, key: str, params: dict) -> dict:
         """카탈로그 키 기반 API 호출 공통 헬퍼"""
+        # 점검 시간대에 계좌/주문 관련 API 호출 시도 시 조용히 처리
+        if is_meritz_maintenance_time() and key in ("holdings", "deposit", "valuation", "orders_buy", "orders_sell", "orders_history"):
+            logger.warning(f"⚠️ [Meritz KR] 일일 전산 점검 시간 (23:50 ~ 00:20) 중이므로 [{key}] 호출을 건너뜁니다.")
+            return {}
+
         api_spec = self.cat.get(key)
         if not api_spec:
             raise ValueError(f"카탈로그에서 API 키를 찾을 수 없습니다: {key}")
         res = self.client.call(api_spec, params)
         if not res.get("ok"):
             err_msg = f"[{key}] 호출 실패: {res.get('error')} - {res.get('message')}"
-            logger.error(err_msg)
+            if "서비스 가능시간이 아닙니다" in str(res.get("message")):
+                logger.warning(f"⚠️ [Meritz KR] 증권사 점검 시간 (23:50 ~ 00:20): {res.get('message')}")
+            else:
+                logger.error(err_msg)
             raise RuntimeError(err_msg)
         body = res.get("body", {})
         return body.get("data") or {}
@@ -132,10 +149,15 @@ class MeritzKrBroker(Broker):
         """예수금(주문 가능 현금) 조회"""
         try:
             data = self._call("deposit", {})
-            # 예수금 / 출금가능금액 필드 파싱
-            cash = data.get("dnca_tot_amt") or data.get("ord_psbl_cash") or data.get("dpst_amt")
-            if cash is not None:
-                return float(cash)
+            if isinstance(data, dict):
+                # 메리츠 deposit API 명세: oder_able_cash_amt(주문가능현금), drng_able_amt(출금가능금액), tfam(총예수금)
+                cash = data.get("oder_able_cash_amt") or data.get("drng_able_amt") or data.get("tfam") or data.get("dnca_tot_amt")
+                if cash is not None:
+                    return float(cash)
+            # 폴백: valuation API의 tfam
+            val = self._call("valuation", {})
+            if isinstance(val, dict) and "tfam" in val:
+                return float(val.get("tfam", 0.0))
         except Exception as e:
             logger.error(f"[Meritz KR] 예수금 조회 실패: {e}")
         return 0.0
