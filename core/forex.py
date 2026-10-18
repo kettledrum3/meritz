@@ -8,10 +8,13 @@
 """
 
 import sys
+import time
+import requests
 import logging
 from pathlib import Path
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, time as dtime
 from typing import Optional, Dict, Any, List, Tuple
+import pytz
 
 # open-api 패키지 경로 추가
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -23,16 +26,55 @@ if str(OPEN_API_DIR) not in sys.path:
 try:
     from meritz import client, load_catalog, MeritzError  # type: ignore
 except ImportError:
-
     client = None
     load_catalog = None
     MeritzError = Exception
 
 from config.settings import settings
-from core.database import log_forex_trade_db, get_forex_history_db, save_exchange_rate_db
+from core.database import (
+    log_forex_trade_db, get_forex_history_db, save_exchange_rate_db,
+    save_forex_strategy_state_db, load_forex_strategy_state_db
+)
 from core.notifier import send_telegram_message
 
 logger = logging.getLogger(__name__)
+
+
+def is_forex_available_time(now_dt: Optional[datetime] = None) -> Tuple[bool, str]:
+    """
+    메리츠증권 USD 실시간 환전 가능 시간 여부 판별 (2026.08.24 개정 기준)
+    - 실시간 환전 가능 시간: 영업일 09:00 ~ 다음 날 02:00
+    - 점검시간: 23:50 ~ 00:20 (환전 불가)
+    :return: (is_available: bool, reason: str)
+    """
+    if now_dt is None:
+        now_dt = datetime.now(pytz.timezone("Asia/Seoul"))
+
+    weekday = now_dt.weekday()  # 0:월, 1:화, ..., 4:금, 5:토, 6:일
+    cur_time = now_dt.time()
+
+    # 1. 일일 전산 점검 시간 (23:50 ~ 00:20)
+    if cur_time >= dtime(23, 50) or cur_time < dtime(0, 20):
+        return False, "전산 점검시간 (23:50 ~ 00:20) 환전 불가"
+
+    # 2. 새벽 00:20 ~ 02:00 (전일 영업일의 연장 세션)
+    # 화(1)~토(5) 새벽 00:20~02:00 허용 (월~금 영업일의 익일 새벽)
+    if dtime(0, 20) <= cur_time < dtime(2, 0):
+        if 1 <= weekday <= 5:
+            return True, "실시간 환전 가능 (익일 연장 세션 00:20 ~ 02:00)"
+        else:
+            return False, "주말/휴일 새벽 환전 불가"
+
+    # 3. 주간 및 야간 09:00 ~ 23:50 (당일 영업일 정규 세션)
+    # 월(0)~금(4) 09:00~23:50 허용
+    if dtime(9, 0) <= cur_time < dtime(23, 50):
+        if 0 <= weekday <= 4:
+            return True, "실시간 환전 가능 (영업일 정규 세션 09:00 ~ 23:50)"
+        else:
+            return False, "주말/휴일 환전 불가"
+
+    # 4. 그 외 시간대 (02:00 ~ 09:00, 주말 등)
+    return False, "실시간 환전 가능 시간 아님 (영업일 09:00 ~ 다음 날 02:00)"
 
 
 class MeritzForexManager:
@@ -45,6 +87,8 @@ class MeritzForexManager:
             )
         self.cat = load_catalog()
         self.client = client()
+        self._dxy_cache: Tuple[float, float] = (0.0, 0.0)  # (timestamp, dxy_value)
+        self._3m_avg_cache: Dict[str, Tuple[float, float]] = {}  # symbol -> (timestamp, avg_val)
         logger.info("💱 MeritzForexManager 초기화 완료")
 
     def _call(self, key: str, params: dict) -> dict:
@@ -399,6 +443,299 @@ class MeritzForexManager:
         )
 
 
+    def get_dxy_index(self) -> float:
+        """달러 인덱스 (DXY) 실시간/최근 종가 조회 (야후 파이낸스)"""
+        now = time.time()
+        if now - self._dxy_cache[0] < 120.0 and self._dxy_cache[1] > 0:
+            return self._dxy_cache[1]
+
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB?interval=1d&range=5d"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        try:
+            resp = requests.get(url, headers=headers, timeout=4)
+            if resp.status_code == 200:
+                data = resp.json()
+                meta = data["chart"]["result"][0]["meta"]
+                dxy = float(meta.get("regularMarketPrice", 0.0))
+                if dxy > 50:
+                    self._dxy_cache = (now, round(dxy, 2))
+                    return round(dxy, 2)
+        except Exception as e:
+            logger.debug(f"[Forex] DXY 인덱스 수신 오류: {e}")
+
+        # 캐시된 값 없으면 99.5 기본값
+        return self._dxy_cache[1] if self._dxy_cache[1] > 0 else 99.5
+
+    def get_3m_avg_rate(self, currency: str = "USD") -> float:
+        """3개월(약 60영업일) 평균 환율 산출 (야후 파이낸스)"""
+        currency = currency.upper()
+        now = time.time()
+        if currency in self._3m_avg_cache:
+            cache_time, val = self._3m_avg_cache[currency]
+            if now - cache_time < 300.0:  # 5분 캐시
+                return val
+
+        symbol = "KRW=X" if currency == "USD" else "JPYKRW=X"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=3mo"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+        try:
+            resp = requests.get(url, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                closes = data["chart"]["result"][0]["indicators"]["quote"][0].get("close", [])
+                valid_closes = [c for c in closes if c is not None and c > 0]
+                if valid_closes:
+                    avg_val = sum(valid_closes) / len(valid_closes)
+                    if currency == "JPY" and avg_val < 50.0:
+                        avg_val *= 100.0
+                    avg_res = round(avg_val, 2)
+                    self._3m_avg_cache[currency] = (now, avg_res)
+                    return avg_res
+        except Exception as e:
+            logger.debug(f"[Forex] 3개월 평균 환율 조회 오류: {e}")
+
+        # Fallback: 현재 환율 기준으로 근사치 반환
+        cur_info = self.get_market_rate(currency)
+        base = cur_info.get("effective_rate", 1380.0 if currency == "USD" else 910.0) if cur_info else 1380.0
+        return round(float(base), 2)
+
+    def get_account_balances(self) -> dict:
+        """
+        메리츠 계좌 실시간 가용 예수금(KRW, USD) 조회
+        """
+        krw_cash = 0.0
+        usd_cash = 0.0
+        total_asset = 0.0
+        source = "API"
+
+        try:
+            from core.brokers.meritz_kr import MeritzKrBroker
+            kb = MeritzKrBroker()
+            krw_cash = float(kb.get_cash_pool() or 0.0)
+        except Exception as e:
+            logger.debug(f"[ForexManager] KRW 예수금 조회 예외: {e}")
+
+        try:
+            from core.brokers.meritz_us import MeritzUsBroker
+            ub = MeritzUsBroker()
+            usd_cash = float(ub.get_cash_pool() or 0.0)
+        except Exception as e:
+            logger.debug(f"[ForexManager] USD 예수금 조회 예외: {e}")
+
+        # 자산평가 데이터 연동 시도
+        try:
+            from dashboard import fetch_meritz_account_data
+            val_data, _ = fetch_meritz_account_data(force=False)
+            if val_data:
+                frcr_eval = float(val_data.get("frcr_tfam", 0.0))
+                if krw_cash <= 0:
+                    krw_cash = float(val_data.get("tfam", 0.0))
+                if usd_cash <= 0 and frcr_eval > 0:
+                    r_info = self.get_market_rate("USD")
+                    r_val = float(r_info.get("effective_rate", 1380.0)) if r_info else 1380.0
+                    if r_val > 0:
+                        usd_cash = round(frcr_eval / r_val, 2)
+                total_asset = float(val_data.get("tot_aset_amt", 0.0))
+                if total_asset <= 0:
+                    total_asset = krw_cash + frcr_eval
+        except Exception:
+            pass
+
+        if total_asset <= 0:
+            rate_info = self.get_market_rate("USD")
+            r = float(rate_info.get("effective_rate", 1380.0)) if rate_info else 1380.0
+            total_asset = krw_cash + (usd_cash * r)
+
+        return {
+            "KRW": krw_cash,
+            "USD": usd_cash,
+            "total_asset": total_asset,
+            "source": source
+        }
+
+
+# =============================================================================
+# 4. 외환 조건부 분할 자동매매 엔진 (Forex DCA & Scalping)
+# =============================================================================
+
+class ForexDcaEngine:
+    """
+    환전 조건부 자동매매 (Dollar Cost Averaging & Scalping Engine)
+    - 진입 조건: 3개월 평균 환율 대비 낮을 때 or 달러인덱스(DXY) 기준치(예: 98 이하) 이하 or 지정 목표환율 이하
+    - 분할 매수: 진입 후 직전 매수가 대비 -0.5% 하락할 때마다 일정 금액씩 추가 환전 매수 (최대 N회차)
+    - 분할 매도: 평균 매수 환율 대비 +1.0% ~ +3.0% 상승 시 33%씩 순차 분할 매도 (SPLIT_3) 또는 목표 수익률 도달 시 일괄 전액 매도 (FULL_TARGET)
+    """
+
+    STRATEGY_ID = "FOREX_DCA_DEFAULT"
+
+    def __init__(self, manager: Optional[MeritzForexManager] = None):
+        self.mgr = manager or forex_manager
+
+    def load_state(self) -> dict:
+        return load_forex_strategy_state_db(self.STRATEGY_ID)
+
+    def save_state(self, state: dict) -> bool:
+        return save_forex_strategy_state_db(self.STRATEGY_ID, state)
+
+    def evaluate_tick(self, check_time: bool = True) -> dict:
+        """
+        스케줄러 주기 작업에서 호출하는 외환 DCA 조건 평가 및 자동 매매 트리거
+        :param check_time: True인 경우 메리츠 실시간 환전 가능 시간(영업일 09:00~익일 02:00, 점검시간 제외) 여부 확인
+        """
+        state = self.load_state()
+        if not state.get("is_active", False):
+            return {"action": "NONE", "reason": "STRATEGY_INACTIVE", "state": state}
+
+        if check_time:
+            is_avail, fx_reason = is_forex_available_time()
+            if not is_avail:
+                return {"action": "NONE", "reason": f"FOREX_CLOSED ({fx_reason})", "state": state}
+
+        currency = state.get("currency", "USD").upper()
+        market_info = self.mgr.get_market_rate(currency)
+        if not market_info:
+            return {"action": "NONE", "reason": "RATE_NOT_AVAILABLE", "state": state}
+
+        cur_rate = float(market_info.get("effective_rate") or market_info.get("stnd_exrt") or 0.0)
+        if cur_rate <= 0:
+            return {"action": "NONE", "reason": "INVALID_RATE", "state": state}
+
+        entry_type = state.get("entry_condition_type", "3M_AVG")
+        benchmark_target = float(state.get("target_benchmark_val", 98.0))
+        drop_step_pct = float(state.get("drop_buy_step_pct", 0.5))
+        buy_unit = float(state.get("buy_unit_amount", 100.0))
+        max_rounds = int(state.get("max_buy_rounds", 10))
+        cur_round = int(state.get("current_round", 0))
+        tot_fiat = float(state.get("total_fiat_bought", 0.0))
+        tot_krw = float(state.get("total_krw_spent", 0.0))
+        avg_buy_rate = float(state.get("avg_buy_rate", 0.0))
+        last_buy_rate = float(state.get("last_buy_rate", 0.0))
+        sell_strat = state.get("sell_strategy_type", "SPLIT_3")
+        target_profit_pct = float(state.get("target_sell_profit_pct", 1.5))
+        sell_stage = int(state.get("sell_stage", 0))
+
+        # -------------------------------------------------------------
+        # A. 매도 (익절) 조건 평가 (보유 외화가 있는 경우)
+        # -------------------------------------------------------------
+        if tot_fiat > 0 and avg_buy_rate > 0:
+            profit_pct = ((cur_rate - avg_buy_rate) / avg_buy_rate) * 100.0
+
+            # 1) 3분할 매도 (1%, 2%, 3% 상승 시 각각 약 33% 매도)
+            if sell_strat == "SPLIT_3":
+                if profit_pct >= 3.0 and sell_stage == 2:
+                    sell_amt = tot_fiat  # 잔여 전액 매도
+                    note = f"[Forex DCA 3단계 전액 익절] 수익률 +{profit_pct:.2f}% 도달"
+                    ok = self.mgr.execute_exchange("SELL", amount_usd=sell_amt, note=note)
+                    if ok:
+                        state["total_fiat_bought"] = 0.0
+                        state["total_krw_spent"] = 0.0
+                        state["current_round"] = 0
+                        state["avg_buy_rate"] = 0.0
+                        state["last_buy_rate"] = 0.0
+                        state["sell_stage"] = 0
+                        state["status"] = "ALL_PROFIT_TAKEN"
+                        self.save_state(state)
+                        return {"action": "SELL", "stage": 3, "profit_pct": profit_pct, "amount": sell_amt}
+
+                elif profit_pct >= 2.0 and sell_stage == 1:
+                    sell_amt = round(tot_fiat * 0.5, 2)  # 남은 66% 중 절반 (원래의 33%)
+                    note = f"[Forex DCA 2단계 33% 익절] 수익률 +{profit_pct:.2f}% 도달"
+                    ok = self.mgr.execute_exchange("SELL", amount_usd=sell_amt, note=note)
+                    if ok:
+                        state["total_fiat_bought"] = round(tot_fiat - sell_amt, 2)
+                        state["sell_stage"] = 2
+                        state["status"] = "PROFIT_STAGE_2"
+                        self.save_state(state)
+                        return {"action": "SELL", "stage": 2, "profit_pct": profit_pct, "amount": sell_amt}
+
+                elif profit_pct >= 1.0 and sell_stage == 0:
+                    sell_amt = round(tot_fiat * 0.33, 2)
+                    note = f"[Forex DCA 1단계 33% 익절] 수익률 +{profit_pct:.2f}% 도달"
+                    ok = self.mgr.execute_exchange("SELL", amount_usd=sell_amt, note=note)
+                    if ok:
+                        state["total_fiat_bought"] = round(tot_fiat - sell_amt, 2)
+                        state["sell_stage"] = 1
+                        state["status"] = "PROFIT_STAGE_1"
+                        self.save_state(state)
+                        return {"action": "SELL", "stage": 1, "profit_pct": profit_pct, "amount": sell_amt}
+
+            # 2) 전액 일괄 매도 (FULL_TARGET)
+            elif sell_strat == "FULL_TARGET":
+                if profit_pct >= target_profit_pct:
+                    sell_amt = tot_fiat
+                    note = f"[Forex DCA 목표 전액 익절] 수익률 +{profit_pct:.2f}% 도달 (목표: {target_profit_pct}%)"
+                    ok = self.mgr.execute_exchange("SELL", amount_usd=sell_amt, note=note)
+                    if ok:
+                        state["total_fiat_bought"] = 0.0
+                        state["total_krw_spent"] = 0.0
+                        state["current_round"] = 0
+                        state["avg_buy_rate"] = 0.0
+                        state["last_buy_rate"] = 0.0
+                        state["sell_stage"] = 0
+                        state["status"] = "ALL_PROFIT_TAKEN"
+                        self.save_state(state)
+                        return {"action": "SELL", "stage": "FULL", "profit_pct": profit_pct, "amount": sell_amt}
+
+        # -------------------------------------------------------------
+        # B. 매수 조건 평가 (분할 회차 여유가 있는 경우)
+        # -------------------------------------------------------------
+        if cur_round < max_rounds:
+            trigger_buy = False
+            buy_reason = ""
+
+            # 1) 최초 1회차 진입 조건
+            if cur_round == 0:
+                if entry_type == "3M_AVG":
+                    avg_3m = self.mgr.get_3m_avg_rate(currency)
+                    if cur_rate <= avg_3m:
+                        trigger_buy = True
+                        buy_reason = f"3개월 평균 환율({avg_3m:,.2f}원) 이하 진입 (현재: {cur_rate:,.2f}원)"
+                elif entry_type == "DXY_BELOW":
+                    dxy = self.mgr.get_dxy_index()
+                    if dxy <= benchmark_target:
+                        trigger_buy = True
+                        buy_reason = f"달러인덱스({dxy:.2f}) 기준치({benchmark_target:.2f}) 이하 진입"
+                elif entry_type == "MANUAL_TARGET":
+                    if cur_rate <= benchmark_target:
+                        trigger_buy = True
+                        buy_reason = f"지정 목표환율({benchmark_target:,.2f}원) 이하 진입 (현재: {cur_rate:,.2f}원)"
+
+            # 2) 2회차 이후 추가 매수: 직전 매수가 대비 drop_buy_step_pct(기본 0.5%) 하락 시
+            else:
+                if last_buy_rate > 0:
+                    drop_from_last = ((cur_rate - last_buy_rate) / last_buy_rate) * 100.0
+                    if drop_from_last <= -drop_step_pct:
+                        trigger_buy = True
+                        buy_reason = f"직전 체결가({last_buy_rate:,.2f}원) 대비 {drop_from_last:.2f}% 하락 (기준: -{drop_step_pct}%)"
+
+            if trigger_buy:
+                note = f"[Forex DCA {cur_round+1}회차 분할매수] {buy_reason}"
+                ok = self.mgr.execute_exchange("BUY", amount_usd=buy_unit, note=note)
+                if ok:
+                    quote = self.mgr.get_applied_rate("BUY", currency)
+                    applied_p = float(quote.get("applied_rate", cur_rate)) if quote else cur_rate
+                    cost_krw = int(buy_unit * applied_p)
+
+                    new_tot_fiat = round(tot_fiat + buy_unit, 2)
+                    new_tot_krw = tot_krw + cost_krw
+                    new_avg = round((new_tot_krw / new_tot_fiat), 2)
+
+                    state["current_round"] = cur_round + 1
+                    state["total_fiat_bought"] = new_tot_fiat
+                    state["total_krw_spent"] = new_tot_krw
+                    state["avg_buy_rate"] = new_avg
+                    state["last_buy_rate"] = applied_p
+                    state["sell_stage"] = 0
+                    state["status"] = f"ROUND_{cur_round+1}_BOUGHT"
+                    self.save_state(state)
+                    return {"action": "BUY", "round": cur_round + 1, "rate": applied_p, "amount": buy_unit}
+
+        return {"action": "NONE", "reason": "CONDITIONS_NOT_MET", "state": state}
+
+
 # 싱글톤 인스턴스 제공
 forex_manager = MeritzForexManager()
+forex_dca_engine = ForexDcaEngine(forex_manager)
+
 

@@ -168,8 +168,11 @@ from core.auth import (
 )
 from core.notifier import send_telegram_message
 from core.scheduler import run_ca_strategies, run_vr_strategies, job_update_exchange_rate # 스케줄러 로직 직접 호출을 위해 임포트
-from core.database import get_exchange_rate_history_db, get_latest_exchange_rate_db, get_forex_history_db
-from core.forex import forex_manager
+from core.database import (
+    get_exchange_rate_history_db, get_latest_exchange_rate_db, get_forex_history_db,
+    save_forex_strategy_state_db, load_forex_strategy_state_db
+)
+from core.forex import forex_manager, forex_dca_engine
 import glob
 import json
 import base64
@@ -485,20 +488,28 @@ def format_ticker_display(t, m_code):
 @st.fragment(run_every=30)
 def display_heartbeat():
     last_hb_str = get_config("scheduler_heartbeat")
+    current_status = get_config("scheduler_status", "stopped")
     is_alive = False
+    last_hb_time = ""
+
     if last_hb_str:
         try:
             last_hb = datetime.strptime(last_hb_str, "%Y-%m-%d %H:%M:%S")
-            # 2분 이내에 심박이 있으면 살아있는 것으로 간주
-            if datetime.now() - last_hb < timedelta(minutes=2):
+            # 3분 이내에 심박이 있으면 프로세스가 살아있는 것으로 판정
+            if datetime.now() - last_hb < timedelta(minutes=3):
                 is_alive = True
+            last_hb_time = last_hb_str.split()[-1]
         except:
             pass
-            
+
     if is_alive:
-        st.success(f"프로세스 동작 중 (Heartbeat: {last_hb_str.split()[-1]})")
+        if current_status == "running":
+            st.success(f"🟢 프로세스 정상 동작 중 (심박: {last_hb_time})")
+        else:
+            st.warning(f"🟡 프로세스 대기 중 (심박: {last_hb_time} | [▶ 실행] 필요)")
     else:
-        st.error("프로세스 응답 없음 (scheduler.py 실행 필요)")
+        st.error("🔴 프로세스 응답 없음 (scheduler.py 실행 필요)")
+        st.caption("※ 백그라운드 데몬 또는 터미널에서 `python -m core.scheduler`를 실행하세요.")
 
 # --- 사이드바 스케줄러 제어 ---
 def display_scheduler_control():
@@ -510,7 +521,7 @@ def display_scheduler_control():
 
     # 2. 동작 상태 제어 (ON/OFF)
     current_status = get_config("scheduler_status", "stopped")
-    
+
     col_s1, col_s2 = st.sidebar.columns(2)
     if col_s1.button("▶ 실행", type="primary" if current_status=="stopped" else "secondary", width='stretch'):
         set_config("scheduler_status", "running")
@@ -518,9 +529,9 @@ def display_scheduler_control():
     if col_s2.button("⏹ 정지", type="primary" if current_status=="running" else "secondary", width='stretch'):
         set_config("scheduler_status", "stopped")
         st.rerun()
-        
+
     status_msg = "🟢 가동 중 (Running)" if current_status == "running" else "🔴 정지됨 (Stopped)"
-    st.sidebar.info(f"상태: **{status_msg}**")
+    st.sidebar.info(f"운영 설정: **{status_msg}**")
 
     # 3. 수동 실행 (Manual Trigger with Preview)
     st.sidebar.markdown("---")
@@ -1974,8 +1985,8 @@ def render_exchange_rate_expander(market_code: str = "US", key_suffix: str = "")
             st.caption(f"환율 추이를 불러올 수 없습니다: {e}")
 
 def render_forex_tab():
-    """메리츠 실시간 외환 환전 및 관리 탭"""
-    st.subheader("💱 메리츠 외환 및 실시간 환전 관리 (Forex)")
+    """메리츠 실시간 외환 환전 및 관리 탭 - 환전 DCA/CA 전략 및 시장 지표(DXY, 3개월 평균) 연동"""
+    st.subheader("💱 메리츠 외환 및 실시간 환전 관리 (Forex Management)")
 
     # [이벤트 배너]
     st.markdown("""
@@ -1983,53 +1994,75 @@ def render_forex_tab():
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
             <div>
                 <span style="font-size: 1.15rem; font-weight: 700;">🎉 메리츠증권 외환 환전 수수료 100% 우대 이벤트 진행 중</span><br>
-                <span style="font-size: 0.88rem; opacity: 0.9;">기본 스프레드(13.34원/USD) 100% 면제 ➔ <b>스프레드 0.00원</b>으로 실시간 환전 가능!</span>
+                <span style="font-size: 0.88rem; opacity: 0.9;">기본 스프레드(13.34원/USD) 100% 면제 ➔ <b>스프레드 0.00원 (No Spread)</b>으로 최적의 환율로 실시간 환전합니다.</span>
             </div>
-            <div style="background-color: rgba(255,255,255,0.22); padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 0.95rem;">
-                환율 우대 100% (No Spread)
+            <div style="background-color: rgba(255,255,255,0.22); padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 0.95rem; text-align: center;">
+                환율 우대<br><span style="font-size: 1.25rem; color: #ffe600;">100% (No Spread)</span>
             </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # 1. 실시간 고시환율 & 적용환율 현황
-    fx_quote = None
-    market_quote = None
-    try:
-        fx_quote = forex_manager.get_applied_rate(direction="BUY", symbol="USD")
-        market_quote = forex_manager.get_market_rate(symbol="USD")
-    except Exception as e:
-        logger.error(f"[FX Tab] 환율 조회 오류: {e}")
+    st.info("🕒 **USD 실시간 환전 가능 시간**: 영업일 **09:00 ~ 다음 날 02:00** (단, 시스템 점검시간 **23:50 ~ 00:20**은 환전 불가)")
 
-    cur_rate = fx_quote.get("applied_rate", 1334.95) if fx_quote else 1334.95
-    base_stnd_rate = market_quote.get("deal_stnd_exrt", 1348.50) if market_quote else 1348.50
-    diff_val = cur_rate - base_stnd_rate
-    pct_val = (diff_val / base_stnd_rate * 100) if base_stnd_rate > 0 else 0.0
+    # 1. 실시간 고시환율 & 주요 시장 지표 (USD/KRW, DXY, 3개월 평균)
+    col_rate_u, col_rate_d, col_rate_avg = st.columns([1.3, 1.0, 1.0])
+    with st.spinner("최신 환율 지표를 조회 중입니다..."):
+        fx_quote = None
+        market_quote = None
+        try:
+            fx_quote = forex_manager.get_applied_rate(direction="BUY", symbol="USD")
+            market_quote = forex_manager.get_market_rate(symbol="USD")
+        except Exception as e:
+            logger.error(f"[FX Tab] 환율 조회 오류: {e}")
 
-    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-    with col_m1:
-        st.metric(
-            label="💵 실시간 적용환율 (1 USD)",
-            value=f"₩{cur_rate:,.2f}",
-            delta=f"{diff_val:+.2f}원 ({pct_val:+.2f}%)"
-        )
-    with col_m2:
-        st.metric(
-            label="외화 매수 환율 (KRW ➔ USD)",
-            value=f"₩{fx_quote.get('by_rate', cur_rate):,.2f}" if fx_quote else f"₩{cur_rate:,.2f}"
-        )
-    with col_m3:
-        st.metric(
-            label="외화 매도 환율 (USD ➔ KRW)",
-            value=f"₩{fx_quote.get('sl_rate', cur_rate):,.2f}" if fx_quote else f"₩{cur_rate:,.2f}"
-        )
-    with col_m4:
-        st.metric(
-            label="적용 스프레드 / 우대율",
-            value="0.00원 (100% 우대)"
-        )
+        cur_rate = fx_quote.get("applied_rate", 1334.95) if fx_quote else 1334.95
+        base_stnd_rate = market_quote.get("deal_stnd_exrt", 1348.50) if market_quote else 1348.50
+        diff_val = cur_rate - base_stnd_rate
+        pct_val = (diff_val / base_stnd_rate * 100) if base_stnd_rate > 0 else 0.0
 
-    st.caption(f"⏱️ 고시 기준시각: {fx_quote.get('exrt_stnd_time', 'N/A') if fx_quote else '실시간'} | 전일 매매기준환율: ₩{base_stnd_rate:,.2f}")
+        dxy_val = forex_manager.get_dxy_index()
+        usd_3m_avg = forex_manager.get_3m_avg_rate("USD")
+
+    with col_rate_u:
+        with st.container(border=True):
+            st.markdown("##### 🇺🇸 USD / KRW (미국 달러)")
+            st.metric(
+                label="실시간 적용환율",
+                value=f"₩{cur_rate:,.2f}",
+                delta=f"{diff_val:+.2f}원 ({pct_val:+.2f}%)"
+            )
+            buy_p = fx_quote.get('by_rate', cur_rate) if fx_quote else cur_rate
+            sell_p = fx_quote.get('sl_rate', cur_rate) if fx_quote else cur_rate
+            st.caption(
+                f"• 외화 매수: **₩{buy_p:,.2f}** / 외화 매도: **₩{sell_p:,.2f}**\n\n"
+                f"• 기준시각: {fx_quote.get('exrt_stnd_time', '실시간') if fx_quote else '실시간'}"
+            )
+
+    with col_rate_d:
+        with st.container(border=True):
+            st.markdown("##### 🌐 달러 인덱스 (DXY)")
+            dxy_status = "저평가 구역 (≤98)" if dxy_val <= 98.0 else "정상/강세 구역 (>98)"
+            st.metric("DXY Index", f"{dxy_val:.2f}", dxy_status)
+            st.caption(
+                f"• 기준치: **98.0** 이하 시 저가 분할매수 권장\n\n"
+                f"• 상태: **{'매수 호조건' if dxy_val <= 98.0 else '관망/분할 대응'}**"
+            )
+
+    with col_rate_avg:
+        with st.container(border=True):
+            st.markdown("##### 📊 3개월 평균 환율 (USD)")
+            diff_from_avg = cur_rate - usd_3m_avg
+            pct_from_avg = ((cur_rate - usd_3m_avg) / usd_3m_avg * 100) if usd_3m_avg > 0 else 0.0
+            st.metric(
+                label="3개월 평균선",
+                value=f"₩{usd_3m_avg:,.2f}",
+                delta=f"{diff_from_avg:+.2f}원 ({pct_from_avg:+.2f}%)",
+                delta_color="inverse"
+            )
+            st.caption(
+                f"• 평균 대비: **{'평균 이하 (매수 유리)' if cur_rate <= usd_3m_avg else '평균 이상 (보수적 분할)'}**"
+            )
 
     st.divider()
 
@@ -2051,7 +2084,6 @@ def render_forex_tab():
     except Exception as e:
         logger.error(f"[FX Tab] 외화예수금 조회 오류: {e}")
 
-    # 자산평가(valuation) 캐시/API 연동하여 외화 원화평가액 및 잔고 보강
     try:
         val_data, _ = fetch_meritz_account_data(force=False)
         if val_data:
@@ -2066,18 +2098,19 @@ def render_forex_tab():
     if frcr_krw_eval <= 0 and usd_cash > 0 and cur_rate > 0:
         frcr_krw_eval = usd_cash * cur_rate
 
+    max_buy_usd = (krw_cash / cur_rate) if cur_rate > 0 else 0
+
     with col_bal1:
         with st.container(border=True):
             st.markdown("##### 🇰🇷 원화(KRW) 가용예수금")
             st.markdown(f"<h2 style='color:#1e3c72; margin:0;'>₩{int(krw_cash):,}원</h2>", unsafe_allow_html=True)
-            max_buy_usd = (krw_cash / cur_rate) if cur_rate > 0 else 0
             st.caption(f"현재 환율 기준 최대 환전 가능: **${max_buy_usd:,.2f}**")
-            
+
     with col_bal2:
         with st.container(border=True):
             st.markdown("##### 🇺🇸 외화(USD) 가용예수금")
             st.markdown(f"<h2 style='color:#2a5298; margin:0;'>${usd_cash:,.2f}</h2>", unsafe_allow_html=True)
-            st.caption(f"원화 환산 가치: **₩{int(frcr_krw_eval):,}원**")
+            st.caption(f"원화 환산 가치: **약 ₩{int(frcr_krw_eval):,}원**")
 
     # 3. 실시간 수동 환전 실행 영역
     st.markdown("---")
@@ -2099,11 +2132,15 @@ def render_forex_tab():
                     input_usd = st.number_input("환전할 외화 금액 ($)", min_value=1.0, value=100.0, step=10.0, format="%.2f")
                     est_krw = int(input_usd * cur_rate)
                     st.info(f"💡 필요 원화 예상 금액: **약 {est_krw:,}원** (적용환율 ₩{cur_rate:,.2f})")
+                    if krw_cash > 0 and est_krw > krw_cash:
+                        st.warning(f"⚠️ 현재 보유 가용 원화(₩{int(krw_cash):,}원)를 초과하는 금액입니다.")
                     req_usd, req_krw = input_usd, 0.0
                 else:
                     input_krw = st.number_input("환전할 원화 금액 (₩)", min_value=10000, value=1000000, step=10000, format="%d")
                     est_usd = (input_krw / cur_rate) if cur_rate > 0 else 0
                     st.info(f"💡 수령 달러 예상 금액: **약 ${est_usd:,.2f}** (적용환율 ₩{cur_rate:,.2f})")
+                    if krw_cash > 0 and input_krw > krw_cash:
+                        st.warning(f"⚠️ 현재 보유 가용 원화(₩{int(krw_cash):,}원)를 초과하는 금액이 입력되었습니다.")
                     req_usd, req_krw = 0.0, float(input_krw)
             else:
                 default_sell_val = min(float(usd_cash), 100.0) if usd_cash >= 1.0 else (usd_cash if usd_cash > 0 else 1.0)
@@ -2120,8 +2157,8 @@ def render_forex_tab():
                     st.warning(f"⚠️ 현재 보유 외화 예수금(${usd_cash:,.2f})보다 큰 금액이 입력되었습니다.")
                 req_usd, req_krw = input_usd_sell, 0.0
 
-        st.caption("※ 실거래 시 메리츠 100% 우대 스프레드가 적용되어 고시된 적용환율 그대로 환전됩니다.")
-        
+        st.caption("※ 실시간 환전 가능 시간: 영업일 09:00 ~ 다음 날 02:00 (전산 점검시간 23:50 ~ 00:20 제외). 실거래 시 메리츠 100% 우대 스프레드가 적용되어 고시된 적용환율 그대로 환전됩니다.")
+
         col_exec1, col_exec2 = st.columns([1, 2])
         with col_exec1:
             confirm_check = st.checkbox("환전 내용 확인 및 실행 동의", key="fx_confirm_chk")
@@ -2143,7 +2180,120 @@ def render_forex_tab():
                     else:
                         st.error("❌ 환전 요청이 실패하였습니다. 시스템 로그를 확인하세요.")
 
-    # 4. 스마트 자동 환전 (CAVR Auto-Funding) 운영 설정
+    # 4. 외환 조건부 분할 자동매매 (Forex DCA & Scalping / 환전 CA 전략)
+    st.markdown("---")
+    st.subheader("🤖 외환 조건부 분할 자동매매 (Forex DCA & Scalping Engine)")
+    st.markdown(
+        """
+        <div style='background: rgba(30, 60, 114, 0.06); padding: 0.8rem 1rem; border-left: 4px solid #2a5298; border-radius: 4px; font-size: 0.88rem; margin-bottom: 1rem;'>
+            <b>💡 외환 조건부 분할 매매(DCA) 운영 로직 (운영시간: 영업일 09:00 ~ 익일 02:00, 점검시간 제외)</b><br>
+            • <b>진입 조건</b>: 3개월 평균 환율보다 낮거나 달러인덱스(DXY)가 98 이하일 때 1회차 자동 매수 시작<br>
+            • <b>분할 매수</b>: 진입 후 직전 매수 환율 대비 <b>0.5%씩 하락할 때마다</b> 회차별 설정 금액 자동 추가 환전 매수<br>
+            • <b>분할 익절</b>: 평균 매수 환율 대비 <b>+1% ~ +3% 상승 시 33%씩 순차 분할 매도</b> 또는 <b>목표 수익률 도달 시 전액 매도</b>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    dca_state = forex_dca_engine.load_state()
+
+    with st.container(border=True):
+        st.markdown("#### ⚙️ 외환 자동매매 전략 파라미터 설정")
+        col_dca_cfg1, col_dca_cfg2 = st.columns(2)
+
+        with col_dca_cfg1:
+            dca_active = st.toggle("외환 분할 자동매매 가동 (ACTIVE)", value=bool(dca_state.get("is_active", False)))
+            st.caption("ℹ️ 스케줄러가 메리츠 실시간 환전 시간(영업일 09:00 ~ 익일 02:00, 점검시간 23:50~00:20 제외) 동안 10분마다 환율 조건을 감시하여 자동 환전 매수/익절을 수행합니다.")
+
+            entry_opts = ["3개월 평균 환율 이하 진입 (3M_AVG)", "달러인덱스(DXY) 기준치 이하 진입 (DXY_BELOW)", "지정 목표 환율 이하 진입 (MANUAL_TARGET)"]
+            cur_entry_type = dca_state.get("entry_condition_type", "3M_AVG")
+            def_entry_idx = 0 if cur_entry_type == "3M_AVG" else (1 if cur_entry_type == "DXY_BELOW" else 2)
+            sel_entry_str = st.selectbox("진입(트리거) 기준 조건", entry_opts, index=def_entry_idx)
+            sel_entry_type = "3M_AVG" if "3M_AVG" in sel_entry_str else ("DXY_BELOW" if "DXY_BELOW" in sel_entry_str else "MANUAL_TARGET")
+
+            if sel_entry_type == "DXY_BELOW":
+                dxy_target = st.number_input("달러인덱스(DXY) 기준치 이하", min_value=80.0, max_value=120.0, value=float(dca_state.get("target_benchmark_val", 98.0)), step=0.5)
+            elif sel_entry_type == "MANUAL_TARGET":
+                dxy_target = st.number_input("지정 목표 환율 이하 (원)", min_value=500.0, max_value=2000.0, value=float(dca_state.get("target_benchmark_val", 1350.0)), step=5.0)
+            else:
+                dxy_target = 0.0
+                st.caption(f"💡 현재 3개월 평균 환율: **₩{usd_3m_avg:,.2f}** (자동 추적 진입)")
+
+        with col_dca_cfg2:
+            buy_unit_val = float(dca_state.get("buy_unit_amount", 100.0))
+            def_unit = buy_unit_val if buy_unit_val > 0 else 100.0
+            inp_unit_amt = st.number_input("1회차 분할 매수 금액 ($)", min_value=10.0, value=def_unit, step=10.0, format="%.2f")
+            inp_drop_step = st.number_input("추가 분할 매수 하락 간격 (%)", min_value=0.1, max_value=5.0, value=float(dca_state.get("drop_buy_step_pct", 0.5)), step=0.1)
+            inp_max_rounds = st.number_input("최대 분할 매수 회차 (N회)", min_value=2, max_value=50, value=int(dca_state.get("max_buy_rounds", 10)), step=1)
+
+            sell_strat_opts = ["3단계 분할 익절 (+1%, +2%, +3% 상승 시 33%씩)", "목표 수익률 일괄 전액 익절"]
+            cur_sell_type = dca_state.get("sell_strategy_type", "SPLIT_3")
+            def_sell_idx = 0 if cur_sell_type == "SPLIT_3" else 1
+            sel_sell_str = st.selectbox("익절(매도) 전략 방식", sell_strat_opts, index=def_sell_idx)
+            sel_sell_type = "SPLIT_3" if "3단계" in sel_sell_str else "FULL_TARGET"
+
+            if sel_sell_type == "FULL_TARGET":
+                target_profit_in = st.number_input("목표 수익률 (%)", min_value=0.5, max_value=20.0, value=float(dca_state.get("target_sell_profit_pct", 1.5)), step=0.1)
+            else:
+                target_profit_in = 1.5
+                st.caption("💡 +1.0%에 33%, +2.0%에 33%, +3.0%에 잔여 전액 순차 분할 익절")
+
+        col_save_dca1, col_save_dca2 = st.columns([1, 1])
+        with col_save_dca1:
+            if st.button("💾 외환 DCA 전략 설정 저장", type="primary", width='stretch'):
+                dca_state["is_active"] = dca_active
+                dca_state["currency"] = "USD"
+                dca_state["entry_condition_type"] = sel_entry_type
+                dca_state["target_benchmark_val"] = dxy_target
+                dca_state["buy_unit_amount"] = inp_unit_amt
+                dca_state["drop_buy_step_pct"] = inp_drop_step
+                dca_state["max_buy_rounds"] = inp_max_rounds
+                dca_state["sell_strategy_type"] = sel_sell_type
+                dca_state["target_sell_profit_pct"] = target_profit_in
+                forex_dca_engine.save_state(dca_state)
+                st.success("✅ 외환 DCA 전략 설정이 성공적으로 저장되었습니다.")
+                time.sleep(1)
+                st.rerun()
+
+        with col_save_dca2:
+            if st.button("▶ 외환 조건 즉시 평가 및 1회 실행", width='stretch', help="현재 환율 및 지표 조건을 즉시 평가하여 조건 충족 시 주문을 실행합니다."):
+                with st.spinner("외환 조건 평가 중..."):
+                    res = forex_dca_engine.evaluate_tick()
+                    action = res.get("action")
+                    if action == "BUY":
+                        st.success(f"🎉 [매수 체결] {res.get('round')}회차 매수 완료! (환율 ₩{res.get('rate'):,.2f})")
+                    elif action == "SELL":
+                        st.success(f"🎊 [익절 체결] {res.get('stage')}단계 매도 완료! (수익률 +{res.get('profit_pct'):.2f}%)")
+                    else:
+                        st.info(f"ℹ️ [조건 미충족] {res.get('reason')} - 현재 환율 ₩{cur_rate:,.2f}")
+                    time.sleep(1.5)
+                    st.rerun()
+
+    # 외환 DCA 현재 진행 현황 모니터링 카드
+    st.markdown("#### 📊 외환 분할 매매 현재 진행 상태")
+    cur_rnd = int(dca_state.get("current_round", 0))
+    max_rnd = int(dca_state.get("max_buy_rounds", 10))
+    tot_f = float(dca_state.get("total_fiat_bought", 0.0))
+    avg_p = float(dca_state.get("avg_buy_rate", 0.0))
+    last_p = float(dca_state.get("last_buy_rate", 0.0))
+
+    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+    with col_stat1:
+        prog = min(cur_rnd / max_rnd, 1.0) if max_rnd > 0 else 0.0
+        st.metric("분할 매수 회차", f"{cur_rnd} / {max_rnd} 회", f"{prog*100:.0f}% 진행")
+        st.progress(prog)
+    with col_stat2:
+        st.metric("누적 보유 외화", f"${tot_f:,.2f}")
+    with col_stat3:
+        st.metric("평균 매수 환율", f"₩{avg_p:,.2f}" if avg_p > 0 else "미매수")
+    with col_stat4:
+        if avg_p > 0 and cur_rate > 0:
+            unrealized_pct = ((cur_rate - avg_p) / avg_p) * 100.0
+            st.metric("현재 평가 손익률", f"{unrealized_pct:+.2f}%", f"현재 ₩{cur_rate:,.2f}")
+        else:
+            st.metric("현재 평가 손익률", "0.00%")
+
+    # 5. 스마트 자동 환전 (CAVR Auto-Funding) 운영 설정
     st.markdown("---")
     st.subheader("🤖 스마트 자동 환전 운영 정책 (CAVR Auto-Funding)")
     with st.container(border=True):
@@ -2156,7 +2306,7 @@ def render_forex_tab():
             cur_harvest = get_config("FX_HARVEST_ENABLED", "true") == "true"
             toggle_harvest = st.toggle("미국 주식 익절 매도 후 원화 자동 회수 (Profit-Harvesting)", value=cur_harvest)
             harvest_ratio = st.slider("수익금 원화 환전 회수 비율 (%)", min_value=10, max_value=100, value=int(get_config("FX_HARVEST_RATIO", "100")), step=10)
-        
+
         if st.button("💾 자동 환전 운영 정책 저장", type="primary"):
             new_mode_str = "AUTO" if toggle_auto_fx else "MANUAL"
             set_config("FX_MODE", new_mode_str)
@@ -2168,7 +2318,7 @@ def render_forex_tab():
             time.sleep(1)
             st.rerun()
 
-    # 5. 환전 체결 이력 테이블
+    # 6. 환전 체결 이력 테이블
     st.markdown("---")
     st.subheader("📜 실시간 환전 체결 기록 (Forex History)")
     forex_records = get_forex_history_db(limit=50)

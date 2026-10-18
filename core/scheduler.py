@@ -33,6 +33,8 @@ from core.database import (
     get_trade_mode,
     rotate_log_file,
     get_connection,
+    get_config,
+    set_config,
 )
 from core.notifier import send_telegram_message
 from core.brokers.meritz_kr import MeritzKrBroker
@@ -511,8 +513,18 @@ def job_us_market_close():
         logger.error(f"❌ [US 일일 결산 오류]: {e}")
 
 
+def update_heartbeat():
+    """스케줄러 생존 상태(Heartbeat)를 DB에 기록 (30초 간격)"""
+    try:
+        now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+        set_config("scheduler_heartbeat", now_str)
+    except Exception as e:
+        logger.error(f"Heartbeat update failed: {e}")
+
+
 def job_heartbeat():
     """[30분 주기] 스케줄러 작동 하트비트 로깅"""
+    update_heartbeat()
     now_kst = datetime.now(KST)
     read_only_msg = " [READ ONLY (모의)]" if settings.MERITZ_READ_ONLY else " [REAL TRADING]"
     logger.info(f"💓 [Heartbeat] Meritz CAVR Scheduler 정상 구동 중 ({now_kst.strftime('%Y-%m-%d %H:%M:%S KST')}){read_only_msg}")
@@ -566,6 +578,23 @@ def job_update_exchange_rate(broker=None, force=False, is_market_open=False):
         logger.error(f"❌ [FX 갱신 실패]: {e}")
         return None
 
+def job_forex_dca_check():
+    """외환 조건부 분할 자동매매 (Forex DCA) 주기 평가 및 실행 (메리츠 실시간 환전 시간: 영업일 09:00 ~ 익일 02:00)"""
+    if get_config("scheduler_status") != "running":
+        return
+    try:
+        from core.forex import is_forex_available_time, forex_dca_engine
+        is_avail, reason = is_forex_available_time()
+        if not is_avail:
+            logger.debug(f"⏳ [Forex DCA] 실시간 환전 비영업 시간 또는 점검 시간 대기: {reason}")
+            return
+
+        res = forex_dca_engine.evaluate_tick(check_time=True)
+        if res.get("action") in ["BUY", "SELL"]:
+            logger.info(f"💱 [Forex DCA] 스케줄러 조건 트리거 체결: {res}")
+    except Exception as e:
+        logger.error(f"❌ [Forex DCA] 스케줄러 감시 오류: {e}")
+
 def run_ca_strategies(market: str = "US", check_existing: bool = False, force: bool = False, order_filter: str = None, transition_only: bool = False, broker=None):
     """DB에 저장된 CA 전략 실행"""
     if broker is None:
@@ -616,8 +645,10 @@ def setup_scheduler() -> BlockingScheduler:
     """APScheduler 작업 등록"""
     scheduler = BlockingScheduler(timezone=KST)
 
-    # 1. 공통 하트비트 (매 30분)
-    scheduler.add_job(job_heartbeat, IntervalTrigger(minutes=30, timezone=KST), id="job_heartbeat")
+    # 1. 공통 심박(Heartbeat) 업데이트 (30초 간격) - 대시보드 상태 모니터링 연동
+    scheduler.add_job(update_heartbeat, IntervalTrigger(seconds=30, timezone=KST), id="heartbeat", name="Heartbeat")
+    # 30분 주기 작동 하트비트 로깅
+    scheduler.add_job(job_heartbeat, IntervalTrigger(minutes=30, timezone=KST), id="job_heartbeat_log")
 
     # 2. 한국 주식 시장 스케줄 (월~금)
     scheduler.add_job(job_kr_morning_prep, CronTrigger(day_of_week='mon-fri', hour=8, minute=50, timezone=KST), id="kr_prep")
@@ -640,6 +671,20 @@ def setup_scheduler() -> BlockingScheduler:
     # 미국 장 마감 정산 (화~토 새벽 05:10 및 06:10)
     scheduler.add_job(job_us_market_close, CronTrigger(day_of_week='tue-sat', hour=5, minute=10, timezone=KST), id="us_close_dst")
     scheduler.add_job(job_us_market_close, CronTrigger(day_of_week='tue-sat', hour=6, minute=10, timezone=KST), id="us_close_std")
+
+    # 4. 외환 조건부 분할 자동매매 (Forex DCA) 감시 (메리츠 USD 실시간 환전 시간: 영업일 09:00 ~ 익일 02:00, 10분 간격)
+    # (1) 주간/야간 세션: 월~금 09:00 ~ 23:50 (23:50 점검시간은 내부 판별 함수에서 자동 대기)
+    scheduler.add_job(
+        job_forex_dca_check,
+        CronTrigger(day_of_week='mon-fri', hour='9-23', minute='*/10', timezone=KST),
+        id='forex_dca_check_day'
+    )
+    # (2) 익일 심야/새벽 연장 세션: 화~토 00:00 ~ 01:50 (00:00~00:20 점검시간은 내부 판별 함수에서 자동 대기)
+    scheduler.add_job(
+        job_forex_dca_check,
+        CronTrigger(day_of_week='tue-sat', hour='0-1', minute='*/10', timezone=KST),
+        id='forex_dca_check_night'
+    )
 
     return scheduler
 
@@ -669,6 +714,9 @@ def main():
     signal.signal(signal.SIGTERM, handle_exit)
 
     send_telegram_message("🚀 <b>[Meritz CAVR 스케줄러 가동]</b> 자동매매 백그라운드 엔진이 정상 시작되었습니다.")
+
+    # 시작 즉시 최초 하트비트 기록
+    update_heartbeat()
 
     try:
         scheduler.start()

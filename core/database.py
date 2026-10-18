@@ -143,6 +143,33 @@ def init_db(run_maintenance=False):
         )
     ''')
 
+    # [ADD] 외환 조건부 분할 자동매매 (Forex DCA & Scalping) 전략 상태 테이블
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS forex_strategy_state (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy_id TEXT UNIQUE,
+            currency TEXT DEFAULT 'USD',
+            is_active INTEGER DEFAULT 0,
+            entry_condition_type TEXT DEFAULT '3M_AVG',
+            target_benchmark_val REAL DEFAULT 0.0,
+            drop_buy_step_pct REAL DEFAULT 0.5,
+            buy_unit_amount REAL DEFAULT 100.0,
+            max_buy_rounds INTEGER DEFAULT 10,
+            current_round INTEGER DEFAULT 0,
+            total_fiat_bought REAL DEFAULT 0.0,
+            total_krw_spent REAL DEFAULT 0.0,
+            avg_buy_rate REAL DEFAULT 0.0,
+            last_buy_rate REAL DEFAULT 0.0,
+            sell_strategy_type TEXT DEFAULT 'SPLIT_3',
+            target_sell_profit_pct REAL DEFAULT 1.5,
+            sell_stage INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'IDLE',
+            trade_mode TEXT DEFAULT 'REAL',
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            config_json TEXT
+        )
+    ''')
+
     # [ADD] 미국 정규장 개장 기준 일별 환율 테이블 (USD/KRW)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS exchange_rates (
@@ -1926,6 +1953,124 @@ def get_forex_history_db(limit: int = 50) -> list:
         logger.error(f"❌ [Forex DB] 환전 내역 조회 실패: {e}")
         return []
 
+
+def save_forex_strategy_state_db(strategy_id: str, state_dict: dict) -> bool:
+    """외환 조건부 분할 자동매매 (Forex DCA) 전략 상태 저장"""
+    try:
+        from config.settings import settings
+        t_mode = "MOCK" if getattr(settings, "MERITZ_READ_ONLY", True) else "REAL"
+    except Exception:
+        t_mode = "REAL"
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cfg_json = json.dumps(state_dict, ensure_ascii=False)
+        currency = state_dict.get("currency", "USD").upper()
+        is_active = 1 if state_dict.get("is_active", False) else 0
+        entry_cond = state_dict.get("entry_condition_type", "3M_AVG")
+        target_val = float(state_dict.get("target_benchmark_val", 0.0))
+        drop_step = float(state_dict.get("drop_buy_step_pct", 0.5))
+        buy_amt = float(state_dict.get("buy_unit_amount", 100.0))
+        max_rounds = int(state_dict.get("max_buy_rounds", 10))
+        cur_round = int(state_dict.get("current_round", 0))
+        tot_fiat = float(state_dict.get("total_fiat_bought", 0.0))
+        tot_krw = float(state_dict.get("total_krw_spent", 0.0))
+        avg_rate = float(state_dict.get("avg_buy_rate", 0.0))
+        last_rate = float(state_dict.get("last_buy_rate", 0.0))
+        sell_strat = state_dict.get("sell_strategy_type", "SPLIT_3")
+        target_profit = float(state_dict.get("target_sell_profit_pct", 1.5))
+        sell_stage = int(state_dict.get("sell_stage", 0))
+        status = state_dict.get("status", "IDLE")
+
+        cursor.execute("""
+            INSERT INTO forex_strategy_state (
+                strategy_id, currency, is_active, entry_condition_type,
+                target_benchmark_val, drop_buy_step_pct, buy_unit_amount,
+                max_buy_rounds, current_round, total_fiat_bought, total_krw_spent,
+                avg_buy_rate, last_buy_rate, sell_strategy_type,
+                target_sell_profit_pct, sell_stage, status, trade_mode,
+                updated_at, config_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+            ON CONFLICT(strategy_id) DO UPDATE SET
+                currency=excluded.currency,
+                is_active=excluded.is_active,
+                entry_condition_type=excluded.entry_condition_type,
+                target_benchmark_val=excluded.target_benchmark_val,
+                drop_buy_step_pct=excluded.drop_buy_step_pct,
+                buy_unit_amount=excluded.buy_unit_amount,
+                max_buy_rounds=excluded.max_buy_rounds,
+                current_round=excluded.current_round,
+                total_fiat_bought=excluded.total_fiat_bought,
+                total_krw_spent=excluded.total_krw_spent,
+                avg_buy_rate=excluded.avg_buy_rate,
+                last_buy_rate=excluded.last_buy_rate,
+                sell_strategy_type=excluded.sell_strategy_type,
+                target_sell_profit_pct=excluded.target_sell_profit_pct,
+                sell_stage=excluded.sell_stage,
+                status=excluded.status,
+                trade_mode=excluded.trade_mode,
+                updated_at=CURRENT_TIMESTAMP,
+                config_json=excluded.config_json
+        """, (
+            strategy_id, currency, is_active, entry_cond,
+            target_val, drop_step, buy_amt,
+            max_rounds, cur_round, tot_fiat, tot_krw,
+            avg_rate, last_rate, sell_strat,
+            target_profit, sell_stage, status, t_mode,
+            cfg_json
+        ))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"❌ [DB] 외환 전략 상태 저장 실패: {e}")
+        return False
+
+
+def load_forex_strategy_state_db(strategy_id: str = "DEFAULT") -> dict:
+    """외환 조건부 분할 자동매매 (Forex DCA) 전략 상태 로드"""
+    default_state = {
+        "strategy_id": strategy_id,
+        "currency": "USD",
+        "is_active": False,
+        "entry_condition_type": "3M_AVG",  # "3M_AVG", "DXY_BELOW", "MANUAL_TARGET"
+        "target_benchmark_val": 98.0,
+        "drop_buy_step_pct": 0.5,
+        "buy_unit_amount": 100.0,
+        "max_buy_rounds": 10,
+        "current_round": 0,
+        "total_fiat_bought": 0.0,
+        "total_krw_spent": 0.0,
+        "avg_buy_rate": 0.0,
+        "last_buy_rate": 0.0,
+        "sell_strategy_type": "SPLIT_3",  # "SPLIT_3" (1%, 2%, 3% 분할 매도), "FULL_TARGET" (목표 수익률 전액 매도)
+        "target_sell_profit_pct": 1.5,
+        "sell_stage": 0,
+        "status": "IDLE"
+    }
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT config_json FROM forex_strategy_state
+            WHERE strategy_id = ?
+            LIMIT 1
+        """, (strategy_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row and row[0]:
+            loaded = json.loads(row[0])
+            default_state.update(loaded)
+            return default_state
+        return default_state
+    except Exception as e:
+        logger.error(f"❌ [DB] 외환 전략 상태 로드 실패: {e}")
+        return default_state
+
+
 if __name__ == "__main__":
     init_db()
+
 
