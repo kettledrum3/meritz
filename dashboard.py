@@ -55,6 +55,10 @@ def setup_logging():
     st_handler.setFormatter(formatter)
     root_logger.addHandler(st_handler)
 
+    # 메리츠 OpenAPI 저수준 HTTP 통신 로그(GET ... -> ok) 및 urllib3 노이즈 억제 (WARNING 이상만 기록)
+    logging.getLogger("meritz").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+
 class StreamlitLogHandler(logging.Handler):
     def emit(self, record):
         msg = self.format(record)
@@ -2006,37 +2010,88 @@ def render_forex_tab():
     st.info("🕒 **USD 실시간 환전 가능 시간**: 영업일 **09:00 ~ 다음 날 02:00** (단, 시스템 점검시간 **23:50 ~ 00:20**은 환전 불가)")
 
     # 1. 실시간 고시환율 & 주요 시장 지표 (USD/KRW, DXY, 3개월 평균)
-    col_rate_u, col_rate_d, col_rate_avg = st.columns([1.3, 1.0, 1.0])
-    with st.spinner("최신 환율 지표를 조회 중입니다..."):
-        fx_quote = None
-        market_quote = None
-        try:
-            fx_quote = forex_manager.get_applied_rate(direction="BUY", symbol="USD")
-            market_quote = forex_manager.get_market_rate(symbol="USD")
-        except Exception as e:
-            logger.error(f"[FX Tab] 환율 조회 오류: {e}")
+    # 세션 상태 기반 환율 데이터 관리
+    def fetch_latest_rates(force: bool = False):
+        if force or "fx_rates_summary" not in st.session_state:
+            with st.spinner("메리츠 실시간 환율을 조회 중입니다..."):
+                try:
+                    summary = forex_manager.get_rates_summary("USD")
+                    st.session_state.fx_rates_summary = summary
+                except Exception as e:
+                    logger.error(f"[FX Tab] 실시간 환율 종합 조회 오류: {e}")
+                    if "fx_rates_summary" not in st.session_state:
+                        st.session_state.fx_rates_summary = {
+                            "crcd": "USD",
+                            "stnd_rate": 1335.0,
+                            "deal_stnd_rate": 1335.0,
+                            "buy_rate": 1335.0,
+                            "sell_rate": 1335.0,
+                            "spread": 0.0,
+                            "dcrt": 100.0,
+                            "exrt_stnd_time": datetime.now().strftime("%Y%m%d%H%M%S"),
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        }
 
-        cur_rate = fx_quote.get("applied_rate", 1334.95) if fx_quote else 1334.95
-        base_stnd_rate = market_quote.get("deal_stnd_exrt", 1348.50) if market_quote else 1348.50
-        diff_val = cur_rate - base_stnd_rate
-        pct_val = (diff_val / base_stnd_rate * 100) if base_stnd_rate > 0 else 0.0
+    # 초기 로드
+    fetch_latest_rates(force=False)
 
-        dxy_val = forex_manager.get_dxy_index()
-        usd_3m_avg = forex_manager.get_3m_avg_rate("USD")
+    # 상단 환율 헤더 & 실시간 환율 조회 버튼
+    col_hdr_title, col_hdr_btn = st.columns([3, 1])
+    with col_hdr_title:
+        st.markdown("#### 📊 실시간 환율 및 주요 시장 지표 (USD / KRW)")
+    with col_hdr_btn:
+        if st.button("🔄 실시간 환율 조회", key="btn_refresh_fx_rates", help="메리츠 OpenAPI로부터 최신 기준환율, 매수환율, 매도환율을 즉시 조회합니다.", width='stretch'):
+            fetch_latest_rates(force=True)
+            st.toast("✅ 메리츠 실시간 환율이 최신 상태로 갱신되었습니다!", icon="💱")
+
+    fx_summary = st.session_state.get("fx_rates_summary", {})
+    stnd_rate = float(fx_summary.get("stnd_rate", 1335.0))
+    cur_rate = stnd_rate  # 이전 변수 참조(DCA 평가 등) 호환성 유지
+    deal_stnd_rate = float(fx_summary.get("deal_stnd_rate", 1335.0))
+    buy_rate = float(fx_summary.get("buy_rate", stnd_rate))
+    sell_rate = float(fx_summary.get("sell_rate", stnd_rate))
+    spread_val = float(fx_summary.get("spread", 0.0))
+    dcrt_val = float(fx_summary.get("dcrt", 100.0))
+    exrt_time = fx_summary.get("exrt_stnd_time", "")
+    updated_at = fx_summary.get("timestamp", "")
+
+    # 전일 매매기준환율 대비 변동폭
+    diff_val = round(stnd_rate - deal_stnd_rate, 2)
+    pct_val = round((diff_val / deal_stnd_rate * 100.0), 2) if deal_stnd_rate > 0 else 0.0
+
+    dxy_val = forex_manager.get_dxy_index()
+    usd_3m_avg = forex_manager.get_3m_avg_rate("USD")
+
+    col_rate_u, col_rate_d, col_rate_avg = st.columns([1.4, 1.0, 1.0])
 
     with col_rate_u:
         with st.container(border=True):
-            st.markdown("##### 🇺🇸 USD / KRW (미국 달러)")
+            st.markdown("##### 🇺🇸 USD / KRW 실시간 환율")
+            # 기준 환율 메트릭
             st.metric(
-                label="실시간 적용환율",
-                value=f"₩{cur_rate:,.2f}",
-                delta=f"{diff_val:+.2f}원 ({pct_val:+.2f}%)"
+                label="기준 환율 (고시)",
+                value=f"₩{stnd_rate:,.2f}",
+                delta=f"{diff_val:+.2f}원 ({pct_val:+.2f}%)" if deal_stnd_rate > 0 else None
             )
-            buy_p = fx_quote.get('by_rate', cur_rate) if fx_quote else cur_rate
-            sell_p = fx_quote.get('sl_rate', cur_rate) if fx_quote else cur_rate
+            # 기준 환율 아래 매수 환율 및 매도 환율 명확히 표시
+            st.markdown(
+                f"""
+                <div style="background-color: rgba(30, 60, 114, 0.08); border-left: 3px solid #1e3c72; padding: 8px 10px; border-radius: 4px; margin-top: 6px; font-size: 0.9rem;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                        <span>🛒 <b>매수 환율 (원화➔달러)</b>:</span>
+                        <span style="color: #d9534f; font-weight: bold;">₩{buy_rate:,.2f}원</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span>💰 <b>매도 환율 (달러➔원화)</b>:</span>
+                        <span style="color: #0275d8; font-weight: bold;">₩{sell_rate:,.2f}원</span>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
             st.caption(
-                f"• 외화 매수: **₩{buy_p:,.2f}** / 외화 매도: **₩{sell_p:,.2f}**\n\n"
-                f"• 기준시각: {fx_quote.get('exrt_stnd_time', '실시간') if fx_quote else '실시간'}"
+                f"• 기준시각: {exrt_time or '실시간'} | 우대율: {dcrt_val:.0f}% (스프레드 {spread_val:,.2f}원)\n\n"
+                f"• 전일 매매기준율: ₩{deal_stnd_rate:,.2f} | 갱신: {updated_at[-8:] if len(updated_at) >= 8 else updated_at}"
             )
 
     with col_rate_d:
@@ -2052,8 +2107,8 @@ def render_forex_tab():
     with col_rate_avg:
         with st.container(border=True):
             st.markdown("##### 📊 3개월 평균 환율 (USD)")
-            diff_from_avg = cur_rate - usd_3m_avg
-            pct_from_avg = ((cur_rate - usd_3m_avg) / usd_3m_avg * 100) if usd_3m_avg > 0 else 0.0
+            diff_from_avg = stnd_rate - usd_3m_avg
+            pct_from_avg = ((stnd_rate - usd_3m_avg) / usd_3m_avg * 100) if usd_3m_avg > 0 else 0.0
             st.metric(
                 label="3개월 평균선",
                 value=f"₩{usd_3m_avg:,.2f}",
@@ -2061,7 +2116,7 @@ def render_forex_tab():
                 delta_color="inverse"
             )
             st.caption(
-                f"• 평균 대비: **{'평균 이하 (매수 유리)' if cur_rate <= usd_3m_avg else '평균 이상 (보수적 분할)'}**"
+                f"• 평균 대비: **{'평균 이하 (매수 유리)' if stnd_rate <= usd_3m_avg else '평균 이상 (보수적 분할)'}**"
             )
 
     st.divider()
@@ -2090,27 +2145,28 @@ def render_forex_tab():
             frcr_krw_eval = float(val_data.get("frcr_tfam", 0.0))
             if krw_cash <= 0:
                 krw_cash = float(val_data.get("tfam", 0.0))
-            if usd_cash <= 0 and frcr_krw_eval > 0 and cur_rate > 0:
-                usd_cash = round(frcr_krw_eval / cur_rate, 2)
+            if usd_cash <= 0 and frcr_krw_eval > 0 and stnd_rate > 0:
+                usd_cash = round(frcr_krw_eval / stnd_rate, 2)
     except Exception as e:
         logger.error(f"[FX Tab] 자산평가 연동 오류: {e}")
 
-    if frcr_krw_eval <= 0 and usd_cash > 0 and cur_rate > 0:
-        frcr_krw_eval = usd_cash * cur_rate
+    if frcr_krw_eval <= 0 and usd_cash > 0 and stnd_rate > 0:
+        frcr_krw_eval = usd_cash * stnd_rate
 
-    max_buy_usd = (krw_cash / cur_rate) if cur_rate > 0 else 0
+    max_buy_usd = (krw_cash / buy_rate) if buy_rate > 0 else ((krw_cash / stnd_rate) if stnd_rate > 0 else 0)
 
     with col_bal1:
         with st.container(border=True):
             st.markdown("##### 🇰🇷 원화(KRW) 가용예수금")
             st.markdown(f"<h2 style='color:#1e3c72; margin:0;'>₩{int(krw_cash):,}원</h2>", unsafe_allow_html=True)
-            st.caption(f"현재 환율 기준 최대 환전 가능: **${max_buy_usd:,.2f}**")
+            st.caption(f"적용 매수환율(₩{buy_rate:,.2f}) 기준 최대 환전 가능: **${max_buy_usd:,.2f}**")
 
     with col_bal2:
         with st.container(border=True):
             st.markdown("##### 🇺🇸 외화(USD) 가용예수금")
             st.markdown(f"<h2 style='color:#2a5298; margin:0;'>${usd_cash:,.2f}</h2>", unsafe_allow_html=True)
-            st.caption(f"원화 환산 가치: **약 ₩{int(frcr_krw_eval):,}원**")
+            est_sell_krw_val = int(usd_cash * sell_rate) if sell_rate > 0 else int(frcr_krw_eval)
+            st.caption(f"적용 매도환율(₩{sell_rate:,.2f}) 기준 원화 환산: **약 ₩{est_sell_krw_val:,}원**")
 
     # 3. 실시간 수동 환전 실행 영역
     st.markdown("---")
@@ -2125,20 +2181,34 @@ def render_forex_tab():
             )
             is_buy = "외화 매수" in fx_direction
 
+            # 방향별 실시간 적용 환율 배지
+            active_rate = buy_rate if is_buy else sell_rate
+            dir_tag = "외화 매수" if is_buy else "외화 매도"
+            st.markdown(
+                f"""
+                <div style="margin-top: 10px; padding: 10px 14px; background-color: {'#eef7ed' if is_buy else '#e8f4fd'}; border: 1px solid {'#81c784' if is_buy else '#90caf9'}; border-radius: 6px;">
+                    <div style="font-size: 0.85rem; color: #555;">실시간 적용 환율 ({dir_tag})</div>
+                    <div style="font-size: 1.35rem; font-weight: bold; color: {'#2e7d32' if is_buy else '#1565c0'};">₩{active_rate:,.2f}원</div>
+                    <div style="font-size: 0.8rem; color: #777;">(기준환율: ₩{stnd_rate:,.2f} | 우대율: {dcrt_val:.0f}%)</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
         with col_fx_amt:
             if is_buy:
                 calc_mode = st.radio("입력 기준", ["달러($) 기준 입력", "원화(₩) 기준 입력"], horizontal=True, key="fx_input_mode_buy")
                 if calc_mode == "달러($) 기준 입력":
                     input_usd = st.number_input("환전할 외화 금액 ($)", min_value=1.0, value=100.0, step=10.0, format="%.2f")
-                    est_krw = int(input_usd * cur_rate)
-                    st.info(f"💡 필요 원화 예상 금액: **약 {est_krw:,}원** (적용환율 ₩{cur_rate:,.2f})")
+                    est_krw = int(input_usd * buy_rate)
+                    st.info(f"💡 필요 원화 예상 금액: **약 {est_krw:,}원** (적용 매수환율 ₩{buy_rate:,.2f})")
                     if krw_cash > 0 and est_krw > krw_cash:
                         st.warning(f"⚠️ 현재 보유 가용 원화(₩{int(krw_cash):,}원)를 초과하는 금액입니다.")
                     req_usd, req_krw = input_usd, 0.0
                 else:
                     input_krw = st.number_input("환전할 원화 금액 (₩)", min_value=10000, value=1000000, step=10000, format="%d")
-                    est_usd = (input_krw / cur_rate) if cur_rate > 0 else 0
-                    st.info(f"💡 수령 달러 예상 금액: **약 ${est_usd:,.2f}** (적용환율 ₩{cur_rate:,.2f})")
+                    est_usd = (input_krw / buy_rate) if buy_rate > 0 else 0
+                    st.info(f"💡 수령 달러 예상 금액: **약 ${est_usd:,.2f}** (적용 매수환율 ₩{buy_rate:,.2f})")
                     if krw_cash > 0 and input_krw > krw_cash:
                         st.warning(f"⚠️ 현재 보유 가용 원화(₩{int(krw_cash):,}원)를 초과하는 금액이 입력되었습니다.")
                     req_usd, req_krw = 0.0, float(input_krw)
@@ -2151,8 +2221,8 @@ def render_forex_tab():
                     step=10.0,
                     format="%.2f"
                 )
-                est_krw_sell = int(input_usd_sell * cur_rate)
-                st.info(f"💡 원화 입금 예상 금액: **약 {est_krw_sell:,}원** (적용환율 ₩{cur_rate:,.2f})")
+                est_krw_sell = int(input_usd_sell * sell_rate)
+                st.info(f"💡 원화 입금 예상 금액: **약 {est_krw_sell:,}원** (적용 매도환율 ₩{sell_rate:,.2f})")
                 if usd_cash > 0 and input_usd_sell > usd_cash:
                     st.warning(f"⚠️ 현재 보유 외화 예수금(${usd_cash:,.2f})보다 큰 금액이 입력되었습니다.")
                 req_usd, req_krw = input_usd_sell, 0.0

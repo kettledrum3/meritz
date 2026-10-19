@@ -66,6 +66,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("scheduler")
 
+# 라이브러리 및 APScheduler 저수준 잡 실행/스케줄러 통지 로그 노이즈 억제 (WARNING 이상만 기록)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
+logging.getLogger("meritz").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+
 KST = timezone("Asia/Seoul")
 EST = timezone("America/New_York")
 
@@ -558,6 +564,7 @@ def job_update_exchange_rate(broker=None, force=False, is_market_open=False):
         trade_date = datetime.now(KST).strftime("%Y-%m-%d")
         now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
+        prev_rate = get_config("USDKRW")
         set_config("USDKRW", f"{rate:.2f}")
         set_config("USDKRW_DIFF", f"{diff:+.2f}")
         set_config("USDKRW_PCT", f"{pct:+.2f}")
@@ -572,7 +579,10 @@ def job_update_exchange_rate(broker=None, force=False, is_market_open=False):
             pct=pct,
             source=fx_info.get("source", "MERITZ_FOREX")
         )
-        logger.info(f"💱 [FX 갱신] USD/KRW = {rate:,.2f}원 ({diff:+.2f}원, {pct:+.2f}%)")
+        if prev_rate != f"{rate:.2f}":
+            logger.info(f"💱 [FX 갱신] USD/KRW = {rate:,.2f}원 ({diff:+.2f}원, {pct:+.2f}%)")
+        else:
+            logger.debug(f"[FX 유지] USD/KRW = {rate:,.2f}원")
         return {"rate": rate, "diff": diff, "pct": pct}
     except Exception as e:
         logger.error(f"❌ [FX 갱신 실패]: {e}")
@@ -672,18 +682,30 @@ def setup_scheduler() -> BlockingScheduler:
     scheduler.add_job(job_us_market_close, CronTrigger(day_of_week='tue-sat', hour=5, minute=10, timezone=KST), id="us_close_dst")
     scheduler.add_job(job_us_market_close, CronTrigger(day_of_week='tue-sat', hour=6, minute=10, timezone=KST), id="us_close_std")
 
-    # 4. 외환 조건부 분할 자동매매 (Forex DCA) 감시 (메리츠 USD 실시간 환전 시간: 영업일 09:00 ~ 익일 02:00, 10분 간격)
-    # (1) 주간/야간 세션: 월~금 09:00 ~ 23:50 (23:50 점검시간은 내부 판별 함수에서 자동 대기)
+    # 4. 외환 조건부 분할 자동매매 (Forex DCA) 및 실시간 환율 감시 (메리츠 USD 실시간 환전 시간: 영업일 09:00 ~ 익일 02:00, 1분 간격)
+    # (1) 주간/야간 세션: 월~금 09:00 ~ 23:50 (23:50 점검시간은 내부 판별 함수에서 자동 대기, 1분 주기)
     scheduler.add_job(
         job_forex_dca_check,
-        CronTrigger(day_of_week='mon-fri', hour='9-23', minute='*/10', timezone=KST),
+        CronTrigger(day_of_week='mon-fri', hour='9-23', minute='*', timezone=KST),
         id='forex_dca_check_day'
     )
-    # (2) 익일 심야/새벽 연장 세션: 화~토 00:00 ~ 01:50 (00:00~00:20 점검시간은 내부 판별 함수에서 자동 대기)
+    # (2) 익일 심야/새벽 연장 세션: 화~토 00:00 ~ 01:50 (00:00~00:20 점검시간은 내부 판별 함수에서 자동 대기, 1분 주기)
     scheduler.add_job(
         job_forex_dca_check,
-        CronTrigger(day_of_week='tue-sat', hour='0-1', minute='*/10', timezone=KST),
+        CronTrigger(day_of_week='tue-sat', hour='0-1', minute='*', timezone=KST),
         id='forex_dca_check_night'
+    )
+
+    # (3) 실시간 USD/KRW 환율 DB 갱신 (1분 간격 정기 수집)
+    scheduler.add_job(
+        job_update_exchange_rate,
+        CronTrigger(day_of_week='mon-fri', hour='9-23', minute='*', timezone=KST),
+        id='update_fx_rate_day'
+    )
+    scheduler.add_job(
+        job_update_exchange_rate,
+        CronTrigger(day_of_week='tue-sat', hour='0-1', minute='*', timezone=KST),
+        id='update_fx_rate_night'
     )
 
     return scheduler

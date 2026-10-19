@@ -10,7 +10,7 @@
 
 import sys
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Tuple, List, Literal, Optional, Dict
 
@@ -193,13 +193,15 @@ class MeritzUsBroker(Broker):
             days = self._call("ovs_market_candles_days", {
                 "mrkt_div_code": "OV",
                 "mrkt_cls_code": mrkt_cls_code,
-                "iscd": symbol
+                "iscd": symbol,
+                "dely_rltm_cls_code": "0",
+                "mod_stpr_cls_code": "0"
             })
             rows = days if isinstance(days, list) else [days]
             closes = [
-                float(row.get("clos_pric", 0.0) or row.get("stck_clpr", 0.0))
+                float(row.get("prpr") or row.get("clos_pric") or row.get("stck_clpr") or 0.0)
                 for row in rows[:5]
-                if row.get("clos_pric") or row.get("stck_clpr")
+                if row.get("prpr") or row.get("clos_pric") or row.get("stck_clpr")
             ]
             if closes:
                 return sum(closes) / len(closes)
@@ -412,28 +414,44 @@ class MeritzUsBroker(Broker):
         return {"rate": 1334.95, "diff": 0.0, "pct": 0.0, "source": "FALLBACK"}
 
     def fetch_daily_chart(self, symbol: str, days: int = 300) -> List[dict]:
-        """미국 주식 일봉 시세 조회"""
+        """미국 주식 일봉 시세 조회 (ovs_market_candles_days)"""
         symbol = symbol.upper()
         mrkt_cls_code, _ = self._resolve_exchange(symbol)
         try:
-            res = self._call("ovs_market_candles_days", {
+            # days 거래일을 커버하기 위해 약 1.6배 일수 역산하여 시작일자 산출
+            end_dt = datetime.now().strftime("%Y%m%d")
+            start_dt = (datetime.now() - timedelta(days=int(days * 1.6) + 30)).strftime("%Y%m%d")
+
+            params = {
                 "mrkt_div_code": "OV",
                 "mrkt_cls_code": mrkt_cls_code,
-                "iscd": symbol
-            })
+                "iscd": symbol,
+                "dely_rltm_cls_code": "0",  # 필수: 0(실시간), 1(지연)
+                "mod_stpr_cls_code": "0",   # 필수: 0(수정주가 보정 주가), 1(보정 전 원래 주가)
+                "from": start_dt,
+                "to": end_dt
+            }
+            res = self._call("ovs_market_candles_days", params)
             rows = res if isinstance(res, list) else [res]
             chart = []
             for row in rows[:days]:
-                d = row.get("stck_bsop_date") or row.get("date")
+                d = row.get("date") or row.get("stck_bsop_date")
                 if not d:
                     continue
+                # 필드 매핑: oprc(시가), hprc(고가), lprc(저가), prpr(종가), acml_vol(거래량)
+                open_p = float(row.get("oprc") or row.get("open_pric") or row.get("stck_oprc") or 0.0)
+                high_p = float(row.get("hprc") or row.get("high_pric") or row.get("stck_hgpr") or 0.0)
+                low_p = float(row.get("lprc") or row.get("low_pric") or row.get("stck_lwpr") or 0.0)
+                close_p = float(row.get("prpr") or row.get("clos_pric") or row.get("stck_clpr") or 0.0)
+                vol = float(row.get("acml_vol") or 0.0)
+
                 chart.append({
                     "Date": d,
-                    "Open": float(row.get("open_pric") or row.get("stck_oprc") or 0.0),
-                    "High": float(row.get("high_pric") or row.get("stck_hgpr") or 0.0),
-                    "Low": float(row.get("low_pric") or row.get("stck_lwpr") or 0.0),
-                    "Close": float(row.get("clos_pric") or row.get("stck_clpr") or 0.0),
-                    "Volume": float(row.get("acml_vol") or 0.0)
+                    "Open": open_p,
+                    "High": high_p,
+                    "Low": low_p,
+                    "Close": close_p,
+                    "Volume": vol
                 })
             return chart
         except Exception as e:

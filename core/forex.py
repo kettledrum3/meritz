@@ -263,15 +263,15 @@ class MeritzForexManager:
         exrt_stnd_time = quote["exrt_stnd_time"]
 
 
-        # 외화 금액 또는 원화 금액 산출
+        # 외화 금액 또는 원화 금액 산출 (명세: frcr_amt는 string(20), wncr_amt는 number(19) 정수)
         if amount_usd > 0:
-            frcr_amt = round(amount_usd, 3)
-            wncr_amt = 0 # 외화 기준일 때는 0 전달
-            est_krw = int(frcr_amt * applied_rate)
+            frcr_amt_str = f"{amount_usd:.3f}"
+            wncr_amt_val = 0  # 외화 기준일 때는 0 전달
+            est_krw = int(amount_usd * applied_rate)
         else:
-            wncr_amt = int(amount_krw)
-            frcr_amt = 0 # 원화 기준일 때는 0 전달
-            est_krw = wncr_amt
+            wncr_amt_val = int(amount_krw)
+            frcr_amt_str = "0.000"  # 원화 기준일 때는 0.000 전달
+            est_krw = wncr_amt_val
 
         dir_text = "원화 ➔ 외화(USD)" if mnec_clcd == "1" else "외화(USD) ➔ 원화"
 
@@ -296,7 +296,7 @@ class MeritzForexManager:
                 crcd=symbol,
                 applied_rate=applied_rate,
                 wncr_amt=est_krw,
-                frcr_amt=amount_usd if amount_usd > 0 else (wncr_amt / applied_rate),
+                frcr_amt=amount_usd if amount_usd > 0 else (wncr_amt_val / applied_rate),
                 fee=0.0,
                 spread=quote.get("spread", 0.0),
                 tr_srno=0,
@@ -309,15 +309,25 @@ class MeritzForexManager:
         body = {
             "crcd": symbol,
             "mnec_clcd": mnec_clcd,
-            "frcr_amt": frcr_amt,
-            "wncr_amt": wncr_amt,
+            "frcr_amt": frcr_amt_str,
+            "wncr_amt": wncr_amt_val,
             "exrt_stnd_time": exrt_stnd_time,
             "iqry_exrt": f"{applied_rate:.4f}"
         }
 
         try:
             api_spec = self.cat.get("fx_exchanges")
-            res = self.client.call(api_spec, body)
+            if not api_spec:
+                raise ValueError("카탈로그에서 fx_exchanges(실시간 환전신청) API를 찾을 수 없습니다.")
+
+            # 메리츠 OpenAPI 상태변경 2단계 안전장치: confirm_token 발급
+            from meritz.core import safety
+            body_to_verify = api_spec.body_params(body) if hasattr(api_spec, "body_params") else body
+            pv = safety.preview(api_spec, body_to_verify, settings.MERITZ_BASE_URL, settings.MERITZ_APP_KEY)
+            confirm_token = pv.get("confirm_token")
+
+            # 실제 환전 요청 (confirm_token 포함 전달)
+            res = self.client.call(api_spec, {**body, "confirm_token": confirm_token})
             if not res.get("ok"):
                 err = f"❌ [FX 환전 실패] {res.get('error')}: {res.get('message')}"
                 logger.error(err)
@@ -362,6 +372,50 @@ class MeritzForexManager:
             logger.error(f"❌ [FX 환전 예외 발생]: {e}")
             send_telegram_message(f"❌ [FX 환전 에러] {e}")
             return False
+
+    def get_rates_summary(self, symbol: str = "USD") -> Dict[str, Any]:
+        """
+        기준 환율, 매수 환율, 매도 환율 종합 실시간 조회
+        - stnd_rate: 고시 기준환율 (또는 전일 매매기준환율)
+        - buy_rate: 고객 외화 매수 적용환율 (KRW -> 외화, tltr_aply_byrt)
+        - sell_rate: 고객 외화 매도 적용환율 (외화 -> KRW, tltr_aply_slrt)
+        - deal_stnd_rate: 전일 매매기준환율
+        - spread, dcrt, exrt_stnd_time 등
+        """
+        symbol = symbol.upper()
+        market_info = self.get_market_rate(symbol=symbol) or {}
+        buy_quote = self.get_applied_rate(direction="BUY", symbol=symbol) or {}
+        sell_quote = self.get_applied_rate(direction="SELL", symbol=symbol) or {}
+
+        stnd_rate = market_info.get("stnd_exrt", 0.0) or market_info.get("effective_rate", 0.0)
+        deal_stnd_rate = market_info.get("deal_stnd_exrt", 0.0)
+        if stnd_rate <= 0:
+            stnd_rate = deal_stnd_rate
+
+        buy_rate = buy_quote.get("by_rate", 0.0) or buy_quote.get("applied_rate", 0.0)
+        sell_rate = sell_quote.get("sl_rate", 0.0) or sell_quote.get("applied_rate", 0.0)
+
+        # fallback 보완
+        if buy_rate <= 0 and stnd_rate > 0:
+            buy_rate = market_info.get("tltr_slrt", stnd_rate)
+        if sell_rate <= 0 and stnd_rate > 0:
+            sell_rate = market_info.get("tltr_byrt", stnd_rate)
+
+        stnd_time = buy_quote.get("exrt_stnd_time") or sell_quote.get("exrt_stnd_time") or datetime.now().strftime("%Y%m%d%H%M%S")
+        dcrt = buy_quote.get("dcrt", 100.0)
+        spread = buy_quote.get("spread", 0.0)
+
+        return {
+            "crcd": symbol,
+            "stnd_rate": stnd_rate,            # 기준환율 (실시간 고시)
+            "deal_stnd_rate": deal_stnd_rate,  # 매매기준환율 (전일)
+            "buy_rate": buy_rate,              # 매수환율 (외화 살 때)
+            "sell_rate": sell_rate,            # 매도환율 (외화 팔 때)
+            "spread": spread,                  # 스프레드
+            "dcrt": dcrt,                      # 우대율 (%)
+            "exrt_stnd_time": stnd_time,       # 기준시각
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
 
     def get_history(self, start_date: str, end_date: str) -> List[Dict[str, Any]]:
         """메리츠 서버에서 환전 체결 이력 조회 (fx_exchanges_history)"""
