@@ -682,29 +682,29 @@ def setup_scheduler() -> BlockingScheduler:
     scheduler.add_job(job_us_market_close, CronTrigger(day_of_week='tue-sat', hour=5, minute=10, timezone=KST), id="us_close_dst")
     scheduler.add_job(job_us_market_close, CronTrigger(day_of_week='tue-sat', hour=6, minute=10, timezone=KST), id="us_close_std")
 
-    # 4. 외환 조건부 분할 자동매매 (Forex DCA) 및 실시간 환율 감시 (메리츠 USD 실시간 환전 시간: 영업일 09:00 ~ 익일 02:00, 1분 간격)
-    # (1) 주간/야간 세션: 월~금 09:00 ~ 23:50 (23:50 점검시간은 내부 판별 함수에서 자동 대기, 1분 주기)
+    # 4. 외환 조건부 분할 자동매매 (Forex DCA) 및 실시간 환율 감시 (메리츠 USD 실시간 환전 시간: 영업일 09:00 ~ 익일 02:00, 10분 간격)
+    # (1) 주간/야간 세션: 월~금 09:00 ~ 23:50 (23:50 점검시간은 내부 판별 함수에서 자동 대기, 10분 주기)
     scheduler.add_job(
         job_forex_dca_check,
-        CronTrigger(day_of_week='mon-fri', hour='9-23', minute='*', timezone=KST),
+        CronTrigger(day_of_week='mon-fri', hour='9-23', minute='*/10', timezone=KST),
         id='forex_dca_check_day'
     )
-    # (2) 익일 심야/새벽 연장 세션: 화~토 00:00 ~ 01:50 (00:00~00:20 점검시간은 내부 판별 함수에서 자동 대기, 1분 주기)
+    # (2) 익일 심야/새벽 연장 세션: 화~토 00:00 ~ 01:50 (00:00~00:20 점검시간은 내부 판별 함수에서 자동 대기, 10분 주기)
     scheduler.add_job(
         job_forex_dca_check,
-        CronTrigger(day_of_week='tue-sat', hour='0-1', minute='*', timezone=KST),
+        CronTrigger(day_of_week='tue-sat', hour='0-1', minute='*/10', timezone=KST),
         id='forex_dca_check_night'
     )
 
-    # (3) 실시간 USD/KRW 환율 DB 갱신 (1분 간격 정기 수집)
+    # (3) 실시간 USD/KRW 환율 DB 갱신 (10분 간격 정기 수집)
     scheduler.add_job(
         job_update_exchange_rate,
-        CronTrigger(day_of_week='mon-fri', hour='9-23', minute='*', timezone=KST),
+        CronTrigger(day_of_week='mon-fri', hour='9-23', minute='*/10', timezone=KST),
         id='update_fx_rate_day'
     )
     scheduler.add_job(
         job_update_exchange_rate,
-        CronTrigger(day_of_week='tue-sat', hour='0-1', minute='*', timezone=KST),
+        CronTrigger(day_of_week='tue-sat', hour='0-1', minute='*/10', timezone=KST),
         id='update_fx_rate_night'
     )
 

@@ -212,7 +212,7 @@ class MeritzForexManager:
                 "by_rate": by_rate,
                 "sl_rate": sl_rate
             }
-            logger.info(f"💱 [FX 견적] {symbol} {quote['direction']}: 적용환율 {effective_rate:,.4f}원 (기준시각: {quote['exrt_stnd_time']}, 우대율: {quote['dcrt']}%)")
+            logger.debug(f"💱 [FX 견적] {symbol} {quote['direction']}: 적용환율 {effective_rate:,.4f}원 (기준시각: {quote['exrt_stnd_time']}, 우대율: {quote['dcrt']}%)")
             return quote
         except Exception as e:
             logger.error(f"[FX] 환전 적용환율 조회 오류: {e}")

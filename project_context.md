@@ -176,6 +176,15 @@
    - 분할 매매 진행 현황 모니터링 카드 (회차 프로그레스 바, 누적 보유 외화, 평균 매수 환율, 현재 평가 손익률).
    - CAVR 연계 스마트 자동 환전(Auto-Funding / Profit-Harvesting) 설정 및 실시간 환전 체결 기록 뷰어.
 
+### 6) 2026-10-23 (금) ~ 10-24 (토) 실시간 환율 수집 최적화 및 FX 견적 로그 레벨 조정
+1. **환율 갱신 및 Forex DCA 스케줄러 수집 주기 최적화 (`core/scheduler.py`)**:
+   - **배경 및 원인**: 실시간 고시환율 갱신(`job_update_exchange_rate`) 및 외환 분할매매 조건 감시(`job_forex_dca_check`)가 `minute='*'`(1분 간격)으로 설정되어 있어, 영업일 기준 하루 수백 회의 불필요한 증권사 OpenAPI 호출 트래픽 및 로그 과다 발생, DB(`exchange_rates`) 과다 INSERT 현상이 발생함.
+   - **조치**: 주간 세션(`forex_dca_check_day`, `update_fx_rate_day`) 및 심야 연장 세션(`forex_dca_check_night`, `update_fx_rate_night`) 작업의 크론 주기를 `minute='*/10'`(10분 간격)으로 완화하여 증권사 OpenAPI 레이트 리밋 방어 및 시스템 부하/DB 누적을 대폭 경감.
+
+2. **환전 견적 로그 레벨 하향 (`core/forex.py`)**:
+   - `forex_manager.get_applied_rate()`의 단순 실시간 견적 조회 시 매번 터미널과 로그 파일에 출력되던 `💱 [FX 견적] USD 외화매수...` 로그를 `logger.info`에서 `logger.debug`로 하향 조정.
+   - 스케줄러 환율 수집 시 10분 주기 정기 갱신 로그(`[FX 갱신] USD/KRW = ...`) 및 실제 환전 주문 체결(`execute_exchange`) 시의 핵심 트레이딩 로그만 명확히 표출되도록 로그 가독성 및 관제 편의성 개선.
+
 ---
 
 ## 3. 핵심 기술 아키텍처 및 차이점 정리
