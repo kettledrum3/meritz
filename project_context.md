@@ -19,6 +19,7 @@
 | **2026-10-17 (토)** | **MY 계좌평가 신설 & 외환/잔고 고도화 & 점검 방어** | • 대시보드 상단 메리츠 HTS 형식 **"MY 계좌평가"** 구역 신설 (기본 닫힘 Expander, 7개 자산평가 및 2행 1레코드 보유잔고 테이블)<br>• 외환 100% 우대 실시간 환전/관리 탭 및 사이드바 환전 모드 신설<br>• 모의투자 Dimming 및 강제 실전투자 보호 가드 구축<br>• 메리츠 공식 GitHub(`open-api`) 최신 업데이트 동기화 (페이징/방화벽/예약주문 코드 완비)<br>• 외화/원화 가용예수금 실제 API 필드 매핑 및 표시 정상화 ($135.87 / ₩183,220원)<br>• 메리츠 일일 전산 점검 시간(**23:50 ~ 00:20**) 자동 감지 및 에러 방어 로직 전면 구축 |
 | **2026-10-18 (일)** | **환전 조건부 분할 자동매매 (Forex DCA/CA 전략) 신설 & 스케줄러 심박/운영시간 고도화** | • 환전 DCA/CA 전략 엔진 구축 (`ForexDcaEngine` in `core/forex.py`)<br>• 지표 연동: 3개월 평균 환율(`3M_AVG`) 및 달러인덱스(`DXY`) 실시간 조회 및 캐싱<br>• 분할 매수 규칙: 직전 매수가 대비 0.5%씩 하락 시 설정 단위금액 추가 매수<br>• 분할/일괄 익절 규칙: 3단계 순차 분할 매도(`SPLIT_3`) 및 목표수익률 일괄 매도(`FULL_TARGET`)<br>• DB 영속화: `forex_strategy_state` 테이블 및 CRUD 함수 신설 (`core/database.py`)<br>• **실시간 환전 시간 반영**: 메리츠 개정 규격에 맞추어 **영업일 09:00 ~ 익일 02:00** (점검시간 23:50~00:20 제외) 자동 판별 함수(`is_forex_available_time`) 탑재<br>• **스케줄러 2단계 감시 등록**: 주간/야간(09:00~23:50) 및 심야 연장(00:20~02:00) 10분 주기 등록 (`core/scheduler.py`)<br>• **스케줄러 30초 심박(Heartbeat) 엔진 보강**: 30초 주기 DB 기록(`update_heartbeat`) 및 기동 즉시 첫 심박 보장으로 "프로세스 응답 없음" 버그 해결<br>• 대시보드 외환 탭 강화: DXY/3개월 평균 메트릭, DCA 파라미터 설정 및 진행 모니터링 카드, 즉시 평가 버튼 탑재 |
 | **2026-10-19 (월)** | **환전 안전장치 & 실시간 환율 & 미국 일봉 시세(백테스트) API & 스케줄러 최적화** | • **환전 confirm_token 에러 해결**: 메리츠 상태변경 2단계 안전장치(`safety.preview()`)를 `execute_exchange`에 연동하여 1회용 `confirm_token` 자동 취득 및 요청 파라미터 전달 구현 완료<br>• **mac_address 및 규격 점검**: 메리츠 라이브러리(`client.py`)에서 `headers()`를 통해 12자리 단말 MAC 주소를 자동 포함 전송함을 검증하고, 명세에 맞추어 `frcr_amt` 규격(문자열 소수점 3자리) 보완<br>• **실시간 환율 원스톱 조회 API 신설**: `forex_manager.get_rates_summary("USD")`를 통해 기준환율, 적용 매수환율(`by_rate`), 적용 매도환율(`sl_rate`), 우대율(`dcrt`), 스프레드를 일괄 조회하는 기능 구현<br>• **대시보드 실시간 환율 버튼 및 3대 환율 표시**: `render_forex_tab`에 **[🔄 실시간 환율 조회]** 버튼을 추가하고, 기준 환율 메트릭 아래에 매수 환율(원화➔달러)과 매도 환율(달러➔원화)을 명확하게 동시 표시하도록 고도화<br>• **미국 일봉 시세(백테스트) API 파라미터 오류 해결**: `ovs_market_candles_days` 필수 파라미터(`dely_rltm_cls_code="0"`, `mod_stpr_cls_code="0"`) 및 기간 조회(`from`, `to`) 누락 보완 완료 ➔ TQQQ 220일 과거 데이터 수집 및 백테스트 정상화<br>• **스케줄러 로그 최적화**: APScheduler(`apscheduler.executors.default`)의 30초 주기 반복 실행 로그(`Running job... / executed successfully`) 및 `meritz` HTTP 통신 로그를 `WARNING`으로 필터링하여 로그 노이즈 대폭 차단<br>• **환율 및 외환 DCA 감시 주기 1분 단축**: 스케줄러의 외환 DCA 조건 평가 및 실시간 USD/KRW 환율 갱신 주기를 10분에서 **1분**으로 단축 적용 완료 |
+| **2026-10-24 (토)** | **백테스트-실전투자 DB 완전 격리 & 차수 비정상 전환 결함 해결 & DB 정상화** | • **원인 규명**: 백테스트 시뮬레이션 중 전량 매도 발생 시 `_handle_cycle_finish_and_restart`에서 `use_db` 체크가 누락되어 실제 운용 DB의 `finish_strategy_db` 및 `save_state_db`가 호출되고 텔레그램 메시지가 발송되던 결함 발견<br>• **3중 격리 안전망 구축**: `cavr.py` 내 모든 차수 전환/상태 저장/알림 로직에 `use_db` 조건 분기 탑재, `backtest.py`에 고유 네임스페이스(`BACKTEST_`) 및 격리 파일 경로 주입, `database.py`에 백테스트 상태 저장 차단 Safety Guard 탑재<br>• **실제 DB 완전 복구**: `finished_strategy_state`에 오염 저장되었던 `TQQQ_1차` ~ `TQQQ_6차` 레코드 6건 삭제 및 활성 `strategy_state`의 TQQQ 전략을 정상 기본 0차(`strategy_name=''`)로 초기화 완료<br>• **격리 무결성 검증**: TQQQ 220일 백테스트 재실행 후 실제 DB 레코드 수 및 활성 상태가 단 1건도 변하지 않음을 자동 검증 통과 |
 
 ---
 
@@ -184,6 +185,28 @@
 2. **환전 견적 로그 레벨 하향 (`core/forex.py`)**:
    - `forex_manager.get_applied_rate()`의 단순 실시간 견적 조회 시 매번 터미널과 로그 파일에 출력되던 `💱 [FX 견적] USD 외화매수...` 로그를 `logger.info`에서 `logger.debug`로 하향 조정.
    - 스케줄러 환율 수집 시 10분 주기 정기 갱신 로그(`[FX 갱신] USD/KRW = ...`) 및 실제 환전 주문 체결(`execute_exchange`) 시의 핵심 트레이딩 로그만 명확히 표출되도록 로그 가독성 및 관제 편의성 개선.
+
+### 7) 2026-10-24 (토) 백테스트-실전투자 DB 완전 격리 및 비정상 차수 전환 버그 해결
+1. **문제 현상 및 원인 분석**:
+   - **현상**: 사용자가 미국 주식 TQQQ CA 백테스트를 진행한 직후, 실전 DB의 TQQQ 전략이 0차에서 7차(`TQQQ_7차`)까지 비정상적으로 전환되고, `finished_strategy_state`에 `TQQQ_1차` ~ `TQQQ_6차` 이력이 실시간으로 기록되며 텔레그램 알림이 전송됨.
+   - **원인**: `core/cavr.py`의 `CostAveragingEngine._handle_cycle_finish_and_restart` 함수에서 전량 매도 발생 시 차수 전환을 처리할 때, `self.config.use_db` 플래그 확인 없이 `finish_strategy_db()`, `get_next_strategy_name()`, `send_telegram_message()`, `save_state_db()`를 무조건 호출하도록 구현되어 있었음. 이로 인해 `use_db=False`인 백테스트 시뮬레이션 중에도 실제 운용 DB와 텔레그램으로 데이터가 유입됨.
+   - 추가로 리버스 모드 진입/복귀 및 VR 빌드업 알림 일부에서 `use_db` 체크 누락, `core/backtest.py`에서 `strategy_name` 미분리 및 `detailed_trade_history_path` 공유 결함이 함께 발견됨.
+
+2. **구현 및 조치 내역 (3중 격리 안전망 구축)**:
+   - **CA/VR 엔진 분기 완비 (`core/cavr.py`)**:
+     - `_handle_cycle_finish_and_restart`: `self.config.use_db == True`일 때만 DB 함수 및 텔레그램 발송을 수행하도록 엄격히 분기. `use_db == False`(백테스트)일 때는 DB 호출 없이 로컬 정규식 기반 차수 증가(`TQQQ_1차` ➔ `TQQQ_2차`) 및 로컬 임시 파일(`save_state`) 저장만 수행.
+     - `_run_reverse_mode_routine` (리버스 모드 진입/복귀) 및 VR 엔진(빌드업 완료)의 텔레그램 발송에 `if self.config.use_db and not preview:` 가드 추가.
+   - **백테스트 네임스페이스 및 파일 경로 완전 격리 (`core/backtest.py`)**:
+     - `CAConfig` 및 `VRConfig` 생성 시 `use_db=False` 명시적 주입.
+     - `strategy_name=f"BACKTEST_{symbol}_{strategy_type}"`를 부여하여 실전 전략과 네임스페이스를 완전히 분리.
+     - `detailed_trade_history_path`를 `backtest_detailed_trade_history_{symbol}.csv`로 분리하여 실전 거래 내역 파일(`data/detailed_trade_history.csv`) 오염 방지.
+   - **시스템 레벨 Safety Guard 탑재 (`core/database.py`)**:
+     - `save_state_db` 및 `finish_strategy_db` 함수 진입부에 전략명에 `"BACKTEST"`가 포함된 경우 실제 DB 조작을 즉시 중단(Early Return)하는 안전 가드 구축.
+
+3. **실제 DB 복구 및 검증**:
+   - `finished_strategy_state` 테이블에서 백테스트 시 생성된 `TQQQ_1차` ~ `TQQQ_6차` 레코드 6건 삭제 완료.
+   - `strategy_state` 테이블의 TQQQ 전략명을 기본 0차(`strategy_name=''`)로 되돌리고, 회차(T=0.0), 평단가, 잔고를 초기 상태로 복구 완료.
+   - 실제 TQQQ 220일 일봉 데이터를 바탕으로 CA 백테스트를 재실행하여, 내부적으로 수차례 차수 전환이 일어나도 실제 DB의 레코드 수(`strategy_state`, `finished_strategy_state`)와 내용이 단 1건도 변하지 않음을 자동 검증 통과.
 
 ---
 

@@ -491,6 +491,11 @@ def save_state_db(state, market: str = "US", strategy_name: str = "", only_if_ex
     only_if_exists=True인 경우, 기존에 해당 전략이 DB에 있을 때만 업데이트합니다. (유령 전략 생성 방지)
     """
     try:
+        # [Safety Guard] 백테스트 관련 상태의 실전 DB 유입 원천 차단
+        if "BACKTEST" in str(strategy_name).upper() or "BACKTEST" in str(getattr(state, 'strategy_name', '')).upper():
+            logger.debug(f"🛑 [Safety Guard] 백테스트 상태는 실전 DB에 저장하지 않습니다: {strategy_name}")
+            return
+
         if trade_mode is None:
             trade_mode = get_trade_mode()
             
@@ -556,6 +561,11 @@ def load_state_db(symbol, strategy_type, market: str = "US", strategy_name: str 
 def finish_strategy_db(symbol, strategy, market: str = "US", strategy_name: str = "", trade_mode: str = None):
     """전략을 종료 상태로 이동 (history 관리)"""
     try:
+        # [Safety Guard] 백테스트 관련 전략의 실전 DB 종료 처리 차단
+        if "BACKTEST" in str(strategy_name).upper():
+            logger.debug(f"🛑 [Safety Guard] 백테스트 전략 종료는 실전 DB에 저장하지 않습니다: {strategy_name}")
+            return
+
         if trade_mode is None:
             trade_mode = get_trade_mode()
             

@@ -280,6 +280,9 @@ def run_backtest(
         config = VRConfig(
             symbol=symbol,
             strategy_type="VR",
+            strategy_name=f"BACKTEST_{symbol}_VR",
+            use_db=False,
+            market=market,
             save_path=temp_state_path,
             initial_budget=initial_cash,
             G=kwargs.get("G", 10.0),
@@ -299,9 +302,16 @@ def run_backtest(
         if os.path.exists(trade_history_path):
             os.remove(trade_history_path)
 
+        detailed_trade_history_path = os.path.join(data_dir, f'backtest_detailed_trade_history_{symbol}.csv')
+        if os.path.exists(detailed_trade_history_path):
+            os.remove(detailed_trade_history_path)
+
         config = CAConfig(
             symbol=symbol,
             strategy_type="CA",
+            strategy_name=f"BACKTEST_{symbol}_CA",
+            use_db=False,
+            market=market,
             save_path=temp_state_path,
             initial_budget=initial_cash,
             unit_buy_amount=unit_buy,
@@ -310,7 +320,8 @@ def run_backtest(
             target_profit_pct=kwargs.get("target_profit_pct", 0.1),
             use_quarter_stop=kwargs.get("use_quarter_stop", True),
             fee_rate=fee_rate,
-            trade_history_path=trade_history_path
+            trade_history_path=trade_history_path,
+            detailed_trade_history_path=detailed_trade_history_path
         )
         engine = CostAveragingEngine(config, broker)
     

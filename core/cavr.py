@@ -1238,7 +1238,7 @@ class CostAveragingEngine:
                 recovery_threshold = -0.15 if "TQQQ" in self.config.symbol else -0.20
                 loss_pct = (current_price - self.state.avg_price) / self.state.avg_price if self.state.avg_price > 0 else 0
                 if not getattr(self, '_reverse_exited_today', False) and loss_pct <= recovery_threshold:
-                    if not preview:
+                    if self.config.use_db and not preview:
                         send_telegram_message(f"🚨 <b>[CA V4.0 리버스 모드 가동]</b> {format_symbol_display(self.config.symbol, self.config.market)}\n예산 소진(T >= {self.config.a_default - 1}, 손실률 {loss_pct*100:.1f}%)에 따라 리버스 모드로 전환합니다.")
                     self.state.mode = "REVERSE"
                     self.state.reverse_cycle_count = 0
@@ -1335,10 +1335,23 @@ class CostAveragingEngine:
         # 1. 기존 전략 종료 처리
         self._log_cycle_end(date, profit)
         old_alias = self.config.strategy_name
-        finish_strategy_db(self.config.symbol, "CA", self.config.market, old_alias)
+        if self.config.use_db:
+            finish_strategy_db(self.config.symbol, "CA", self.config.market, old_alias)
         
         # 2. 다음 차수 생성 및 복리(Compound) 예산 산출
-        next_alias = get_next_strategy_name(self.config.symbol, "CA", self.config.market)
+        if self.config.use_db:
+            next_alias = get_next_strategy_name(self.config.symbol, "CA", self.config.market)
+        else:
+            # 백테스트 등 DB 미사용 시 로컬 차수 증가 로직 (실전 DB 접근 방지)
+            import re
+            m = re.search(r'_(\d+)차$', old_alias or '')
+            if m:
+                cur_num = int(m.group(1))
+                next_alias = re.sub(r'_\d+차$', f'_{cur_num + 1}차', old_alias)
+            elif old_alias:
+                next_alias = f"{old_alias}_1차"
+            else:
+                next_alias = f"{self.config.symbol}_1차"
         
         # [복리(Compound) 설정] 이전 차수의 설정 예산에 실현 수익금을 합산하여 새 차수 예산 산정
         prev_budget = self.state.cycle_budget if self.state.cycle_budget > 0 else (self.state.pool if self.state.pool > 0 else self.config.initial_budget)
@@ -1361,13 +1374,14 @@ class CostAveragingEngine:
 
         logger.info(f"📈 [복리 차수 전환] {old_alias} -> {next_alias} (이전 예산: {cur_sym}{fmt_v(prev_budget)} + 수익: {cur_sym}{fmt_v(profit)} => 새 예산: {cur_sym}{fmt_v(new_budget)}, 1회 매수금: {cur_sym}{fmt_v(new_unit_buy)} ({a_cnt}분할))")
         
-        send_telegram_message(
-            f"🚀 <b>[CA 복리 차수 전환]</b> {format_symbol_display(self.config.symbol, self.config.market)}\n"
-            f"이전 차수: {old_alias} 종료 (실현손익: +{cur_sym}{fmt_v(profit)})\n"
-            f"새로운 차수: <b>{next_alias}</b> 시작!\n"
-            f"전략 할당 예산: <b>{cur_sym}{fmt_v(new_budget)}</b> (복리 반영)\n"
-            f"1회 매수금: <b>{cur_sym}{fmt_v(new_unit_buy)}</b> ({a_cnt}분할)"
-        )
+        if self.config.use_db:
+            send_telegram_message(
+                f"🚀 <b>[CA 복리 차수 전환]</b> {format_symbol_display(self.config.symbol, self.config.market)}\n"
+                f"이전 차수: {old_alias} 종료 (실현손익: +{cur_sym}{fmt_v(profit)})\n"
+                f"새로운 차수: <b>{next_alias}</b> 시작!\n"
+                f"전략 할당 예산: <b>{cur_sym}{fmt_v(new_budget)}</b> (복리 반영)\n"
+                f"1회 매수금: <b>{cur_sym}{fmt_v(new_unit_buy)}</b> ({a_cnt}분할)"
+            )
 
         new_state = CAState(
             symbol=self.config.symbol,
@@ -1386,7 +1400,11 @@ class CostAveragingEngine:
         )
         
         # 3. 새 전략 저장 및 엔진 상태 전환
-        save_state_db(new_state, market=self.config.market, strategy_name=next_alias)
+        if self.config.use_db:
+            save_state_db(new_state, market=self.config.market, strategy_name=next_alias)
+        else:
+            save_state(new_state, self.config.save_path)
+
         self.config.strategy_name = next_alias
         self.config.unit_buy_amount = new_unit_buy
         self.config.initial_budget = new_budget
@@ -1434,10 +1452,11 @@ class CostAveragingEngine:
                     self.state.unit_buy_amount = self.config.unit_buy_amount
 
             if not preview:
-                send_telegram_message(
-                    f"✨ <b>[CA V4.0 일반 모드 복귀]</b> {format_symbol_display(self.config.symbol, self.config.market)}\n"
-                    f"주가 회복(현재가: {current_price:.2f} >= 탈출가: {escape_price:.2f}, 손익률: {profit_rate*100:.2f}%)에 따라 리버스 모드를 종료하고 일반 모드로 복귀합니다."
-                )
+                if self.config.use_db:
+                    send_telegram_message(
+                        f"✨ <b>[CA V4.0 일반 모드 복귀]</b> {format_symbol_display(self.config.symbol, self.config.market)}\n"
+                        f"주가 회복(현재가: {current_price:.2f} >= 탈출가: {escape_price:.2f}, 손익률: {profit_rate*100:.2f}%)에 따라 리버스 모드를 종료하고 일반 모드로 복귀합니다."
+                    )
                 self._save_and_finish(current_price=current_price)
             return self.planned_orders if preview else None
 
@@ -2097,7 +2116,8 @@ class ValueRebalancingEngine:
 
                     symbol_display = format_symbol_display(symbol, self.config.market)
                     logger.info(f"🎉 [Bootstrap Completed] {self.state.bootstrap_days}일의 초기 빌드업이 완료되었습니다! RUNNING 모드로 전환합니다. (초기원금: {cur_sym}{fmt_val(V1)}, 목표 V2: {cur_sym}{fmt_val(self.state.V)}, 잔여 Pool: {cur_sym}{fmt_val(self.state.pool)})")
-                    send_telegram_message(f"🎉 <b>[VR 빌드업 완료]</b> {symbol_display} 전략의 초기 빌드업({self.state.bootstrap_days}일)이 완료되어 RUNNING 모드로 자동 전환되었습니다!\n초기원금(V1): {cur_sym}{fmt_val(V1)}\n새 목표 V: <b>{cur_sym}{fmt_val(self.state.V)}</b>\n잔여 Pool: {cur_sym}{fmt_val(self.state.pool)}")
+                    if self.config.use_db:
+                        send_telegram_message(f"🎉 <b>[VR 빌드업 완료]</b> {symbol_display} 전략의 초기 빌드업({self.state.bootstrap_days}일)이 완료되어 RUNNING 모드로 자동 전환되었습니다!\n초기원금(V1): {cur_sym}{fmt_val(V1)}\n새 목표 V: <b>{cur_sym}{fmt_val(self.state.V)}</b>\n잔여 Pool: {cur_sym}{fmt_val(self.state.pool)}")
                 
                 if self.config.use_db:
                     save_state_db(self.state, market=self.state.market, strategy_name=self.state.strategy_name)
