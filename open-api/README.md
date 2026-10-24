@@ -84,7 +84,7 @@ res = c.call(cat.get("market_prices"), {"mrkt_div_code": "J", "iscd": "005930"})
 
 | 파일 | 내용 |
 |---|---|
-| [`openapi.json`](openapi.json) | REST 71건 — OpenAPI 3.1 |
+| [`openapi.json`](openapi.json) | REST 73건 — OpenAPI 3.1 |
 | [`asyncapi.json`](asyncapi.json) | 실시간 14건 — AsyncAPI 3.0 |
 | [`CATALOG.md`](CATALOG.md) | 카탈로그 파일이 무엇이고 어떻게 갱신하는지 |
 

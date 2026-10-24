@@ -34,7 +34,7 @@
 - [meritz/core/catalog.py](meritz/core/catalog.py): API 명세 조회
 - [meritz/core/config.py](meritz/core/config.py): 환경변수 읽기
 - [meritz/core/safety.py](meritz/core/safety.py): 주문·환전 확인 절차
-- [meritz/data/catalog.json](meritz/data/catalog.json): API 명세 (REST 71건·실시간 14건)
+- [meritz/data/catalog.json](meritz/data/catalog.json): API 명세 (REST 73건·실시간 14건)
 - [openapi.json](openapi.json) · [asyncapi.json](asyncapi.json): 같은 명세의 OpenAPI 3.1 · AsyncAPI 3.0 판 — 도구에 가져다 쓰는 용도
 - [meritz/data/corrections.json](meritz/data/corrections.json): API별 응답 처리 참고자료
 

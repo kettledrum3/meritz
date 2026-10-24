@@ -75,6 +75,7 @@ body:
     - 06_paging.py — 연속 조회
     - 07_realtime.py — 실시간
     - 08_forex.py — 환율·환전
+    - 09_index.py — 지수
     - meritz/ 아래 공통 코드
     - 예제를 고쳐 쓴 코드
   validations:

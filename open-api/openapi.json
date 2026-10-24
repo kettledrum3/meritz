@@ -2,7 +2,7 @@
  "openapi": "3.1.0",
  "info": {
   "title": "메리츠증권 Open API",
-  "version": "2026-10-16",
+  "version": "2026-10-22",
   "description": "포털 등록 명세에서 생성했습니다. 정본은 개발자 포털입니다."
  },
  "servers": [
@@ -5197,11 +5197,11 @@
       "name": "mod_stpr_cls_code",
       "in": "query",
       "required": false,
-      "description": "수정주가 구분입니다. \"0\" 또는 \"1\" 을 넣습니다.",
+      "description": "수정주가 구분입니다. \"0\" 또는 \"1\" 을 넣습니다.\n0:수정종각 (기본값)\n1:원종가",
       "schema": {
        "type": "string",
        "title": "수정주가구분코드",
-       "description": "수정주가 구분입니다. \"0\" 또는 \"1\" 을 넣습니다.",
+       "description": "수정주가 구분입니다. \"0\" 또는 \"1\" 을 넣습니다.\n0:수정종각 (기본값)\n1:원종가",
        "maxLength": 3
       }
      },
@@ -11125,6 +11125,7 @@
          "odqt",
          "ovrs_stck_oder_prc",
          "oder_rsev_cls_code",
+         "oder_rsev_hour_clcd",
          "oder_sta_date",
          "oder_fin_date"
         ],
@@ -11500,7 +11501,7 @@
          "data": {
           "pros_srno": 1
          },
-         "rsp_cd": "5620",
+         "rsp_cd": "0000",
          "rsp_msg": "정상 처리 되었습니다.",
          "tr_cont": "0"
         }
@@ -17574,6 +17575,391 @@
      }
     },
     "x-tr-id": "ohhts_6000_020r",
+    "x-tps": "10"
+   }
+  },
+  "/market/v1/overseas/fx/prices": {
+   "get": {
+    "operationId": "ovs_market_fx_prices",
+    "summary": "환율 시세 조회",
+    "tags": [
+     "overseas_market"
+    ],
+    "description": "원/달러, 원/엔, 원/위안, 원/유로와 달러 기준 주요 통화쌍의 시장 환율 시세를 조회합니다.",
+    "parameters": [
+     {
+      "name": "mac_address",
+      "in": "header",
+      "required": true,
+      "description": "MAC_ADDRESS 필수 입력",
+      "schema": {
+       "type": "string",
+       "title": "사용자 MAC_ADDRESS",
+       "description": "MAC_ADDRESS 필수 입력",
+       "maxLength": 12
+      }
+     },
+     {
+      "name": "iscd",
+      "in": "query",
+      "required": true,
+      "description": "통화쌍 코드입니다. 코드: 응답 종목명(isnm) 형식입니다.\n\n원화\nUSDKRWSMBS: 원/달러\nJPYKRWCOMP: 원/일본 엔\nCNYKRWCOMP: 한국 원/중국 위안\nEURKRWCOMP: 원/유로\n\n교차 환율\nEURUSDCOMP: 달러/유로\nUSDJPYCOMP: 일본 엔/달러\nEURJPYCOMP: 일본 엔/유로\nGBPUSDCOMP: 달러/영국 파운드\nUSDCHFCOMP: 스위스 프랑/달러\nUSDCADCOMP: 캐나다 달러/달러\nAUDUSDCOMP: 달러/호주 달러\nUSDHKDCOMP: 홍콩 달러/달러\nUSDSGDCOMP: 싱가폴 달러/달러\n(query string)",
+      "schema": {
+       "type": "string",
+       "title": "종목코드",
+       "description": "통화쌍 코드입니다. 코드: 응답 종목명(isnm) 형식입니다.\n\n원화\nUSDKRWSMBS: 원/달러\nJPYKRWCOMP: 원/일본 엔\nCNYKRWCOMP: 한국 원/중국 위안\nEURKRWCOMP: 원/유로\n\n교차 환율\nEURUSDCOMP: 달러/유로\nUSDJPYCOMP: 일본 엔/달러\nEURJPYCOMP: 일본 엔/유로\nGBPUSDCOMP: 달러/영국 파운드\nUSDCHFCOMP: 스위스 프랑/달러\nUSDCADCOMP: 캐나다 달러/달러\nAUDUSDCOMP: 달러/호주 달러\nUSDHKDCOMP: 홍콩 달러/달러\nUSDSGDCOMP: 싱가폴 달러/달러\n(query string)",
+       "maxLength": 12
+      },
+      "example": "USDKRWSMBS"
+     },
+     {
+      "name": "tr_cont",
+      "in": "query",
+      "required": false,
+      "description": "이 API는 연속조회를 지원하지 않으므로 넣지 않습니다. (query string)",
+      "schema": {
+       "type": "string",
+       "title": "연속조회 여부",
+       "description": "이 API는 연속조회를 지원하지 않으므로 넣지 않습니다. (query string)",
+       "maxLength": 1
+      }
+     },
+     {
+      "name": "tr_cont_key",
+      "in": "query",
+      "required": false,
+      "description": "이 API는 연속조회를 지원하지 않으므로 넣지 않습니다. (query string)",
+      "schema": {
+       "type": "string",
+       "title": "연속조회 키",
+       "description": "이 API는 연속조회를 지원하지 않으므로 넣지 않습니다. (query string)",
+       "maxLength": 20
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "성공",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "rsp_cd": {
+           "type": "string",
+           "title": "응답코드",
+           "description": "응답 코드",
+           "maxLength": 5
+          },
+          "rsp_msg": {
+           "type": "string",
+           "title": "응답메시지",
+           "description": "응답 메시지",
+           "maxLength": 200
+          },
+          "tr_cont": {
+           "type": "string",
+           "title": "연속조회여부",
+           "description": "연속조회 여부",
+           "maxLength": 1
+          },
+          "data": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "iscd": {
+              "type": "string",
+              "title": "종목코드",
+              "description": "조회한 통화쌍 코드입니다. 요청에 넣은 값과 같습니다.",
+              "maxLength": 12
+             },
+             "mrkt_cls_code": {
+              "type": "string",
+              "title": "시장구분코드",
+              "description": "통화쌍이 속한 시장 구분입니다.",
+              "maxLength": 2
+             },
+             "isnm": {
+              "type": "string",
+              "title": "종목명",
+              "description": "통화쌍 이름입니다. (예: 원/달러)",
+              "maxLength": 50
+             },
+             "date": {
+              "type": "string",
+              "title": "일자",
+              "description": "시세 기준 일자입니다. YYYYMMDD 8자리.",
+              "maxLength": 8
+             },
+             "prpr": {
+              "type": "number",
+              "title": "현재가",
+              "description": "가장 최근 환율입니다. 소수점이 있을 수 있습니다."
+             },
+             "prdy_vrss": {
+              "type": "number",
+              "title": "전일대비",
+              "description": "전일 종가 대비 등락폭입니다."
+             },
+             "prdy_vrss_sign": {
+              "type": "string",
+              "title": "전일대비부호",
+              "description": "등락 부호입니다.\n\"1\" 상한 · \"2\" 상승 · \"3\" 보합 · \"4\" 하한 · \"5\" 하락",
+              "maxLength": 1
+             },
+             "prdy_ctrt": {
+              "type": "number",
+              "title": "전일대비율",
+              "description": "전일 종가 대비 등락률입니다. 단위는 퍼센트."
+             },
+             "oprc": {
+              "type": "number",
+              "title": "시가",
+              "description": "당일 시가입니다."
+             },
+             "hprc": {
+              "type": "number",
+              "title": "고가",
+              "description": "당일 고가입니다."
+             },
+             "lprc": {
+              "type": "number",
+              "title": "저가",
+              "description": "당일 저가입니다."
+             }
+            }
+           },
+           "title": "목록"
+          }
+         }
+        },
+        "example": {
+         "data": [
+          {
+           "iscd": "USDKRWSMBS",
+           "mrkt_cls_code": "EN",
+           "isnm": "원/달러",
+           "date": "20261022",
+           "prpr": 1322.1,
+           "prdy_vrss": -3.9,
+           "prdy_vrss_sign": "5",
+           "prdy_ctrt": -0.29,
+           "oprc": 1327.5,
+           "hprc": 1328.6,
+           "lprc": 1321.2
+          }
+         ],
+         "rsp_cd": "0000",
+         "rsp_msg": "정상 처리 되었습니다."
+        }
+       }
+      }
+     }
+    },
+    "x-tr-id": "ohhts_1684_001r",
+    "x-tps": "10"
+   }
+  },
+  "/market/v1/overseas/commodities/prices": {
+   "get": {
+    "operationId": "ovs_market_commodities_prices",
+    "summary": "해외 원자재·달러인덱스 현재가 조회",
+    "tags": [
+     "overseas_market"
+    ],
+    "description": "금·원유 등 원자재(상품선물)와 달러인덱스의 현재 시세를 조회합니다.  시장 구분(mrkt_div_code)과 종목 코드(iscd)를 넣으면 현재가와 전일 대비 등락, 등락률, 누적 거래량, 당일 시가·고가·저가가 내려옵니다. 시장 브리핑이나 투자 지표 화면에 그대로 쓰실 수 있습니다.  종목은 한 번에 하나씩 조회합니다. mrkt_div_code 는 \"FN\"(원자재·상품선물) 또는 \"N\"(달러인덱스)이며, 두 값 모두 필수입니다.",
+    "parameters": [
+     {
+      "name": "mac_address",
+      "in": "header",
+      "required": true,
+      "description": "MAC_ADDRESS 필수 입력",
+      "schema": {
+       "type": "string",
+       "title": "사용자 MAC_ADDRESS",
+       "description": "MAC_ADDRESS 필수 입력",
+       "maxLength": 12
+      }
+     },
+     {
+      "name": "mrkt_div_code",
+      "in": "query",
+      "required": true,
+      "description": "시장 구분입니다.\n\"FN\": 원자재(상품선물)\n\"N\": 달러인덱스 (query string)",
+      "schema": {
+       "type": "string",
+       "title": "시장 구분 코드",
+       "description": "시장 구분입니다.\n\"FN\": 원자재(상품선물)\n\"N\": 달러인덱스 (query string)",
+       "maxLength": 2
+      },
+      "example": "FN"
+     },
+     {
+      "name": "iscd",
+      "in": "query",
+      "required": true,
+      "description": "종목 코드입니다. 거래소@심볼 형식이며, 시장 구분에 맞는 코드를 넣으십시오.\n\n[mrkt_div_code=FN] 귀금속\nCOM@GC: 금\nCOM@SI: 은\nNYM@PL: 백금\nNYM@PA: 팔라듐\n\n[FN] 비철금속\nCOM@HG: 구리\nLME@CDA: 전기동(3M)\nLME@ADY: 알루미늄 H/G(캐시)\nLME@NAA: NA 알루미늄(3M)\nLME@ZDY: 아연(캐시)\nLME@ZDA: 아연(3M)\nLME@NDY: 니켈(캐시)\nLME@NDA: 니켈(3M)\nLME@SDY: 주석(캐시)\nLME@SDA: 주석(3M)\nLME@PDY: 납(캐시)\nLME@PDA: 납(3M)\n\n[FN] 에너지\nNYM@CL: WTI 원유\nIPE@EB: 브렌트유\nSPT@DU: 두바이유\n\n[FN] 곡물\nCBT$ZC: 옥수수\nCBT$ZW: 소맥\nCBT$ZS: 대두\nCBT$ZM: 대두박\nCBT$ZL: 대두유\nCBT$ZO: 귀리\n\n[FN] 소프트 상품\nNYB@KC: 커피\nNYB@CC: 코코아\nNYB@SB: 설탕\nNYB@CT: 면화\n\n[FN] 지수선물\nCME@ES: E-mini S&P500 선물\nCME@NQ: E-mini 나스닥100 선물\n\n[mrkt_div_code=N] 달러인덱스\nETC@DXY00: 달러인덱스\n(query string)",
+      "schema": {
+       "type": "string",
+       "title": "종목코드",
+       "description": "종목 코드입니다. 거래소@심볼 형식이며, 시장 구분에 맞는 코드를 넣으십시오.\n\n[mrkt_div_code=FN] 귀금속\nCOM@GC: 금\nCOM@SI: 은\nNYM@PL: 백금\nNYM@PA: 팔라듐\n\n[FN] 비철금속\nCOM@HG: 구리\nLME@CDA: 전기동(3M)\nLME@ADY: 알루미늄 H/G(캐시)\nLME@NAA: NA 알루미늄(3M)\nLME@ZDY: 아연(캐시)\nLME@ZDA: 아연(3M)\nLME@NDY: 니켈(캐시)\nLME@NDA: 니켈(3M)\nLME@SDY: 주석(캐시)\nLME@SDA: 주석(3M)\nLME@PDY: 납(캐시)\nLME@PDA: 납(3M)\n\n[FN] 에너지\nNYM@CL: WTI 원유\nIPE@EB: 브렌트유\nSPT@DU: 두바이유\n\n[FN] 곡물\nCBT$ZC: 옥수수\nCBT$ZW: 소맥\nCBT$ZS: 대두\nCBT$ZM: 대두박\nCBT$ZL: 대두유\nCBT$ZO: 귀리\n\n[FN] 소프트 상품\nNYB@KC: 커피\nNYB@CC: 코코아\nNYB@SB: 설탕\nNYB@CT: 면화\n\n[FN] 지수선물\nCME@ES: E-mini S&P500 선물\nCME@NQ: E-mini 나스닥100 선물\n\n[mrkt_div_code=N] 달러인덱스\nETC@DXY00: 달러인덱스\n(query string)",
+       "maxLength": 12
+      },
+      "example": "COM@GC"
+     },
+     {
+      "name": "tr_cont",
+      "in": "query",
+      "required": false,
+      "description": "이 API는 연속조회를 지원하지 않으므로 넣지 않습니다. (query string)",
+      "schema": {
+       "type": "string",
+       "title": "연속조회 여부",
+       "description": "이 API는 연속조회를 지원하지 않으므로 넣지 않습니다. (query string)",
+       "maxLength": 1
+      }
+     },
+     {
+      "name": "tr_cont_key",
+      "in": "query",
+      "required": false,
+      "description": "이 API는 연속조회를 지원하지 않으므로 넣지 않습니다. (query string)",
+      "schema": {
+       "type": "string",
+       "title": "연속조회 키",
+       "description": "이 API는 연속조회를 지원하지 않으므로 넣지 않습니다. (query string)",
+       "maxLength": 20
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "성공",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "rsp_cd": {
+           "type": "string",
+           "title": "응답코드",
+           "description": "응답 코드",
+           "maxLength": 5
+          },
+          "rsp_msg": {
+           "type": "string",
+           "title": "응답메시지",
+           "description": "응답 메시지",
+           "maxLength": 200
+          },
+          "tr_cont": {
+           "type": "string",
+           "title": "연속조회여부",
+           "description": "연속조회 여부",
+           "maxLength": 1
+          },
+          "data": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "iscd": {
+              "type": "string",
+              "title": "종목코드",
+              "description": "조회한 종목 코드입니다. 요청에 넣은 값과 같습니다.",
+              "maxLength": 12
+             },
+             "mrkt_cls_code": {
+              "type": "string",
+              "title": "시장구분코드",
+              "description": "종목이 속한 시장 구분입니다.",
+              "maxLength": 2
+             },
+             "isnm": {
+              "type": "string",
+              "title": "종목명",
+              "description": "종목명입니다.",
+              "maxLength": 50
+             },
+             "date": {
+              "type": "string",
+              "title": "일자",
+              "description": "시세 기준 일자입니다. YYYYMMDD 8자리.",
+              "maxLength": 8
+             },
+             "prpr": {
+              "type": "number",
+              "title": "현재가",
+              "description": "가장 최근 시세입니다. 원자재·달러인덱스 가격이므로 소수점이 있을 수 있습니다."
+             },
+             "prdy_vrss": {
+              "type": "number",
+              "title": "전일대비",
+              "description": "전일 종가 대비 등락폭입니다."
+             },
+             "prdy_vrss_sign": {
+              "type": "string",
+              "title": "전일대비부호",
+              "description": "등락 부호입니다.\n\"1\" 상한 · \"2\" 상승 · \"3\" 보합 · \"4\" 하한 · \"5\" 하락",
+              "maxLength": 1
+             },
+             "prdy_ctrt": {
+              "type": "number",
+              "title": "전일대비율",
+              "description": "전일 종가 대비 등락률입니다. 단위는 퍼센트."
+             },
+             "acml_vol": {
+              "type": "number",
+              "title": "누적거래량",
+              "description": "당일 누적 거래량입니다. 거래량이 제공되지 않는 종목(달러인덱스, LME 비철금속, 두바이유 등)은 0입니다."
+             },
+             "oprc": {
+              "type": "number",
+              "title": "시가",
+              "description": "당일 시가입니다."
+             },
+             "hprc": {
+              "type": "number",
+              "title": "고가",
+              "description": "당일 고가입니다."
+             },
+             "lprc": {
+              "type": "number",
+              "title": "저가",
+              "description": "당일 저가입니다."
+             }
+            }
+           },
+           "title": "목록"
+          }
+         }
+        },
+        "example": {
+         "data": [
+          {
+           "iscd": "COM@GC",
+           "mrkt_cls_code": "FN",
+           "isnm": "금 26-12",
+           "date": "20261021",
+           "prpr": 4150.0,
+           "prdy_vrss": 7.4,
+           "prdy_vrss_sign": "2",
+           "prdy_ctrt": 0.17,
+           "acml_vol": 143504,
+           "oprc": 4143.4,
+           "hprc": 4160.6,
+           "lprc": 4122.3
+          }
+         ],
+         "rsp_cd": "0000",
+         "rsp_msg": "정상 처리 되었습니다."
+        }
+       }
+      }
+     }
+    },
+    "x-tr-id": "ohhts_1682_001r",
     "x-tps": "10"
    }
   }

@@ -2,7 +2,7 @@
  "asyncapi": "3.0.0",
  "info": {
   "title": "메리츠증권 Open API 실시간",
-  "version": "2026-10-16",
+  "version": "2026-10-22",
   "description": "접속점은 하나이며, 구독 요청 body 의 tr_cd 로 채널을 가릅니다. tr_key 에 종목코드 등 구독 대상을 넣습니다."
  },
  "servers": {

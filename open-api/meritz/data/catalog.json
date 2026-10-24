@@ -1,5 +1,5 @@
 {
- "generated": "2026-10-16",
+ "generated": "2026-10-22",
  "source": "메리츠증권 개발자 포털 등록 명세",
  "groups": [
   "OAuth 인증",
@@ -10,9 +10,9 @@
   "(실시간) 해외주식"
  ],
  "counts": {
-  "rest": 71,
+  "rest": 73,
   "websocket": 14,
-  "total": 85
+  "total": 87
  },
  "apis": [
   {
@@ -7480,7 +7480,7 @@
       "location": "query",
       "depth": 0,
       "child": false,
-      "description": "수정주가 구분입니다. \"0\" 또는 \"1\" 을 넣습니다."
+      "description": "수정주가 구분입니다. \"0\" 또는 \"1\" 을 넣습니다.<br/>0:수정종각 (기본값)<br/>1:원종가"
      },
      {
       "name": "from",
@@ -16337,7 +16337,7 @@
       "name_ko": "주문예약시간구분코드",
       "type": "string",
       "length": "1",
-      "required": false,
+      "required": true,
       "location": "body",
       "depth": 0,
       "child": false,
@@ -16928,7 +16928,7 @@
    },
    "example": {
     "request": "POST /trading/v1/overseas/reserved-orders/cancel\ncontent-type: application/json; charset=utf-8\nauthorization: Bearer {access_token}\nmac_address: {mac_address}\n\n{\n    \"oder_rsev_mst_date\": \"20260318\",\n    \"oder_rsev_mst_no\": \"5\"\n}",
-    "response": "{\n    \"data\": {\n        \"pros_srno\": 1\n    },\n    \"rsp_cd\": \"5620\",\n    \"rsp_msg\": \"정상 처리 되었습니다.\",\n    \"tr_cont\": \"0\"\n}"
+    "response": "{\n    \"data\": {\n        \"pros_srno\": 1\n    },\n    \"rsp_cd\": \"0000\",\n    \"rsp_msg\": \"정상 처리 되었습니다.\",\n    \"tr_cont\": \"0\"\n}"
    }
   },
   {
@@ -25384,6 +25384,542 @@
    "example": {
     "request": "GET /market/v1/overseas/prices/after?mrkt_div_code=OV&mrkt_cls_code=OQ&iscd=AAPL&dely_rltm_cls_code=0\nauthorization: Bearer {access_token}",
     "response": "{\n    \"data\": {\n        \"iscd\": \"AAPL\",\n        \"mkt_aft_prpr\": \"340.4800\",\n        \"mkt_aft_prdy_vrss_sign\": \"2\",\n        \"mkt_aft_prdy_vrss\": \"0.5600\",\n        \"mkt_aft_prdy_ctrt\": \"0.16\",\n        \"acml_vol\": 141046\n    },\n    \"rsp_cd\": \"0000\",\n    \"rsp_msg\": \"정상 처리 되었습니다.\"\n}"
+   }
+  },
+  {
+   "key": "ovs_market_fx_prices",
+   "name": "환율 시세 조회",
+   "category": "overseas_market",
+   "protocol": "REST",
+   "method": "GET",
+   "path": "/market/v1/overseas/fx/prices",
+   "tr_id": "ohhts_1684_001r",
+   "tps": "10",
+   "content_type": "application/json; charset=utf-8",
+   "domain": {
+    "prod": "https://openapi.imeritz.com:9443"
+   },
+   "description": "원/달러, 원/엔, 원/위안, 원/유로와 달러 기준 주요 통화쌍의 시장 환율 시세를 조회합니다.",
+   "request": {
+    "header": [
+     {
+      "name": "authorization",
+      "name_ko": "인증 토큰",
+      "type": "string",
+      "length": "1000",
+      "required": true,
+      "location": "header",
+      "depth": 0,
+      "child": false,
+      "description": "OAuth 토큰이 필요한 API 경우 발급한 Access Token을 설정하기 위한 Request Header Parameter"
+     },
+     {
+      "name": "mac_address",
+      "name_ko": "사용자 MAC_ADDRESS",
+      "type": "string",
+      "length": "12",
+      "required": true,
+      "location": "header",
+      "depth": 0,
+      "child": false,
+      "description": "MAC_ADDRESS 필수 입력"
+     }
+    ],
+    "params": [
+     {
+      "name": "iscd",
+      "name_ko": "종목코드",
+      "type": "string",
+      "length": "12",
+      "required": true,
+      "location": "query",
+      "depth": 0,
+      "child": false,
+      "description": "통화쌍 코드입니다. 코드: 응답 종목명(isnm) 형식입니다.<br/><br/><b>원화</b><br/>USDKRWSMBS: 원/달러<br/>JPYKRWCOMP: 원/일본 엔<br/>CNYKRWCOMP: 한국 원/중국 위안<br/>EURKRWCOMP: 원/유로<br/><br/><b>교차 환율</b><br/>EURUSDCOMP: 달러/유로<br/>USDJPYCOMP: 일본 엔/달러<br/>EURJPYCOMP: 일본 엔/유로<br/>GBPUSDCOMP: 달러/영국 파운드<br/>USDCHFCOMP: 스위스 프랑/달러<br/>USDCADCOMP: 캐나다 달러/달러<br/>AUDUSDCOMP: 달러/호주 달러<br/>USDHKDCOMP: 홍콩 달러/달러<br/>USDSGDCOMP: 싱가폴 달러/달러<br/>(query string)"
+     },
+     {
+      "name": "tr_cont",
+      "name_ko": "연속조회 여부",
+      "type": "string",
+      "length": "1",
+      "required": false,
+      "location": "query",
+      "depth": 0,
+      "child": false,
+      "description": "이 API는 연속조회를 지원하지 않으므로 넣지 않습니다. (query string)"
+     },
+     {
+      "name": "tr_cont_key",
+      "name_ko": "연속조회 키",
+      "type": "string",
+      "length": "20",
+      "required": false,
+      "location": "query",
+      "depth": 0,
+      "child": false,
+      "description": "이 API는 연속조회를 지원하지 않으므로 넣지 않습니다. (query string)"
+     }
+    ]
+   },
+   "response": {
+    "header": [
+     {
+      "name": "content-type",
+      "name_ko": "컨텐트 타입",
+      "type": "string",
+      "length": "100",
+      "required": true,
+      "location": "header",
+      "depth": 0,
+      "child": false,
+      "description": "메리츠증권 제공 API를 호출한 후 Client로 응답하는 Response Header Parameter로 \"application/json; charset=utf-8\" 설정"
+     }
+    ],
+    "body": [
+     {
+      "name": "iscd",
+      "name_ko": "종목코드",
+      "type": "string",
+      "length": "12",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "조회한 통화쌍 코드입니다. 요청에 넣은 값과 같습니다."
+     },
+     {
+      "name": "mrkt_cls_code",
+      "name_ko": "시장구분코드",
+      "type": "string",
+      "length": "2",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "통화쌍이 속한 시장 구분입니다."
+     },
+     {
+      "name": "isnm",
+      "name_ko": "종목명",
+      "type": "string",
+      "length": "50",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "통화쌍 이름입니다. (예: 원/달러)"
+     },
+     {
+      "name": "date",
+      "name_ko": "일자",
+      "type": "string",
+      "length": "8",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "시세 기준 일자입니다. YYYYMMDD 8자리."
+     },
+     {
+      "name": "prpr",
+      "name_ko": "현재가",
+      "type": "number",
+      "length": "12",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "가장 최근 환율입니다. 소수점이 있을 수 있습니다."
+     },
+     {
+      "name": "prdy_vrss",
+      "name_ko": "전일대비",
+      "type": "number",
+      "length": "12",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "전일 종가 대비 등락폭입니다."
+     },
+     {
+      "name": "prdy_vrss_sign",
+      "name_ko": "전일대비부호",
+      "type": "string",
+      "length": "1",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "등락 부호입니다.<br/>\"1\" 상한 · \"2\" 상승 · \"3\" 보합 · \"4\" 하한 · \"5\" 하락"
+     },
+     {
+      "name": "prdy_ctrt",
+      "name_ko": "전일대비율",
+      "type": "number",
+      "length": "9",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "전일 종가 대비 등락률입니다. 단위는 퍼센트."
+     },
+     {
+      "name": "oprc",
+      "name_ko": "시가",
+      "type": "number",
+      "length": "12",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "당일 시가입니다."
+     },
+     {
+      "name": "hprc",
+      "name_ko": "고가",
+      "type": "number",
+      "length": "12",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "당일 고가입니다."
+     },
+     {
+      "name": "lprc",
+      "name_ko": "저가",
+      "type": "number",
+      "length": "12",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "당일 저가입니다."
+     },
+     {
+      "name": "rsp_cd",
+      "name_ko": "응답코드",
+      "type": "string",
+      "length": "5",
+      "required": true,
+      "location": "body",
+      "depth": 0,
+      "child": false,
+      "description": "응답 코드"
+     },
+     {
+      "name": "rsp_msg",
+      "name_ko": "응답메시지",
+      "type": "string",
+      "length": "200",
+      "required": true,
+      "location": "body",
+      "depth": 0,
+      "child": false,
+      "description": "응답 메시지"
+     },
+     {
+      "name": "tr_cont",
+      "name_ko": "연속조회여부",
+      "type": "string",
+      "length": "1",
+      "required": true,
+      "location": "body",
+      "depth": 0,
+      "child": false,
+      "description": "연속조회 여부"
+     }
+    ],
+    "containers": {
+     "data": {
+      "type": "array",
+      "name_ko": "목록"
+     }
+    }
+   },
+   "example": {
+    "request": "GET /market/v1/overseas/fx/prices?iscd=USDKRWSMBS\nauthorization: Bearer {access_token}\nmac_address: {mac_address}",
+    "response": "{\n    \"data\": [\n        {\n            \"iscd\": \"USDKRWSMBS\",\n            \"mrkt_cls_code\": \"EN\",\n            \"isnm\": \"원/달러\",\n            \"date\": \"20261022\",\n            \"prpr\": 1322.1,\n            \"prdy_vrss\": -3.9,\n            \"prdy_vrss_sign\": \"5\",\n            \"prdy_ctrt\": -0.29,\n            \"oprc\": 1327.5,\n            \"hprc\": 1328.6,\n            \"lprc\": 1321.2\n        }\n    ],\n    \"rsp_cd\": \"0000\",\n    \"rsp_msg\": \"정상 처리 되었습니다.\"\n}"
+   }
+  },
+  {
+   "key": "ovs_market_commodities_prices",
+   "name": "해외 원자재·달러인덱스 현재가 조회",
+   "category": "overseas_market",
+   "protocol": "REST",
+   "method": "GET",
+   "path": "/market/v1/overseas/commodities/prices",
+   "tr_id": "ohhts_1682_001r",
+   "tps": "10",
+   "content_type": "application/json; charset=utf-8",
+   "domain": {
+    "prod": "https://openapi.imeritz.com:9443"
+   },
+   "description": "금·원유 등 원자재(상품선물)와 달러인덱스의 현재 시세를 조회합니다.  시장 구분(mrkt_div_code)과 종목 코드(iscd)를 넣으면 현재가와 전일 대비 등락, 등락률, 누적 거래량, 당일 시가·고가·저가가 내려옵니다. 시장 브리핑이나 투자 지표 화면에 그대로 쓰실 수 있습니다.  종목은 한 번에 하나씩 조회합니다. mrkt_div_code 는 \"FN\"(원자재·상품선물) 또는 \"N\"(달러인덱스)이며, 두 값 모두 필수입니다.",
+   "request": {
+    "header": [
+     {
+      "name": "authorization",
+      "name_ko": "인증 토큰",
+      "type": "string",
+      "length": "1000",
+      "required": true,
+      "location": "header",
+      "depth": 0,
+      "child": false,
+      "description": "OAuth 토큰이 필요한 API 경우 발급한 Access Token을 설정하기 위한 Request Header Parameter"
+     },
+     {
+      "name": "mac_address",
+      "name_ko": "사용자 MAC_ADDRESS",
+      "type": "string",
+      "length": "12",
+      "required": true,
+      "location": "header",
+      "depth": 0,
+      "child": false,
+      "description": "MAC_ADDRESS 필수 입력"
+     }
+    ],
+    "params": [
+     {
+      "name": "mrkt_div_code",
+      "name_ko": "시장 구분 코드",
+      "type": "string",
+      "length": "2",
+      "required": true,
+      "location": "query",
+      "depth": 0,
+      "child": false,
+      "description": "시장 구분입니다.<br/>\"FN\": 원자재(상품선물)<br/>\"N\": 달러인덱스 (query string)"
+     },
+     {
+      "name": "iscd",
+      "name_ko": "종목코드",
+      "type": "string",
+      "length": "12",
+      "required": true,
+      "location": "query",
+      "depth": 0,
+      "child": false,
+      "description": "종목 코드입니다. 거래소@심볼 형식이며, 시장 구분에 맞는 코드를 넣으십시오.<br/><br/><b>[mrkt_div_code=FN] 귀금속</b><br/>COM@GC: 금<br/>COM@SI: 은<br/>NYM@PL: 백금<br/>NYM@PA: 팔라듐<br/><br/><b>[FN] 비철금속</b><br/>COM@HG: 구리<br/>LME@CDA: 전기동(3M)<br/>LME@ADY: 알루미늄 H/G(캐시)<br/>LME@NAA: NA 알루미늄(3M)<br/>LME@ZDY: 아연(캐시)<br/>LME@ZDA: 아연(3M)<br/>LME@NDY: 니켈(캐시)<br/>LME@NDA: 니켈(3M)<br/>LME@SDY: 주석(캐시)<br/>LME@SDA: 주석(3M)<br/>LME@PDY: 납(캐시)<br/>LME@PDA: 납(3M)<br/><br/><b>[FN] 에너지</b><br/>NYM@CL: WTI 원유<br/>IPE@EB: 브렌트유<br/>SPT@DU: 두바이유<br/><br/><b>[FN] 곡물</b><br/>CBT$ZC: 옥수수<br/>CBT$ZW: 소맥<br/>CBT$ZS: 대두<br/>CBT$ZM: 대두박<br/>CBT$ZL: 대두유<br/>CBT$ZO: 귀리<br/><br/><b>[FN] 소프트 상품</b><br/>NYB@KC: 커피<br/>NYB@CC: 코코아<br/>NYB@SB: 설탕<br/>NYB@CT: 면화<br/><br/><b>[FN] 지수선물</b><br/>CME@ES: E-mini S&P500 선물<br/>CME@NQ: E-mini 나스닥100 선물<br/><br/><b>[mrkt_div_code=N] 달러인덱스</b><br/>ETC@DXY00: 달러인덱스<br/>(query string)"
+     },
+     {
+      "name": "tr_cont",
+      "name_ko": "연속조회 여부",
+      "type": "string",
+      "length": "1",
+      "required": false,
+      "location": "query",
+      "depth": 0,
+      "child": false,
+      "description": "이 API는 연속조회를 지원하지 않으므로 넣지 않습니다. (query string)"
+     },
+     {
+      "name": "tr_cont_key",
+      "name_ko": "연속조회 키",
+      "type": "string",
+      "length": "20",
+      "required": false,
+      "location": "query",
+      "depth": 0,
+      "child": false,
+      "description": "이 API는 연속조회를 지원하지 않으므로 넣지 않습니다. (query string)"
+     }
+    ]
+   },
+   "response": {
+    "header": [
+     {
+      "name": "content-type",
+      "name_ko": "컨텐트 타입",
+      "type": "string",
+      "length": "100",
+      "required": true,
+      "location": "header",
+      "depth": 0,
+      "child": false,
+      "description": "메리츠증권 제공 API를 호출한 후 Client로 응답하는 Response Header Parameter로 \"application/json; charset=utf-8\" 설정"
+     }
+    ],
+    "body": [
+     {
+      "name": "iscd",
+      "name_ko": "종목코드",
+      "type": "string",
+      "length": "12",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "조회한 종목 코드입니다. 요청에 넣은 값과 같습니다."
+     },
+     {
+      "name": "mrkt_cls_code",
+      "name_ko": "시장구분코드",
+      "type": "string",
+      "length": "2",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "종목이 속한 시장 구분입니다."
+     },
+     {
+      "name": "isnm",
+      "name_ko": "종목명",
+      "type": "string",
+      "length": "50",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "종목명입니다."
+     },
+     {
+      "name": "date",
+      "name_ko": "일자",
+      "type": "string",
+      "length": "8",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "시세 기준 일자입니다. YYYYMMDD 8자리."
+     },
+     {
+      "name": "prpr",
+      "name_ko": "현재가",
+      "type": "number",
+      "length": "12",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "가장 최근 시세입니다. 원자재·달러인덱스 가격이므로 소수점이 있을 수 있습니다."
+     },
+     {
+      "name": "prdy_vrss",
+      "name_ko": "전일대비",
+      "type": "number",
+      "length": "12",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "전일 종가 대비 등락폭입니다."
+     },
+     {
+      "name": "prdy_vrss_sign",
+      "name_ko": "전일대비부호",
+      "type": "string",
+      "length": "1",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "등락 부호입니다.<br/>\"1\" 상한 · \"2\" 상승 · \"3\" 보합 · \"4\" 하한 · \"5\" 하락"
+     },
+     {
+      "name": "prdy_ctrt",
+      "name_ko": "전일대비율",
+      "type": "number",
+      "length": "9",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "전일 종가 대비 등락률입니다. 단위는 퍼센트."
+     },
+     {
+      "name": "acml_vol",
+      "name_ko": "누적거래량",
+      "type": "number",
+      "length": "18",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "당일 누적 거래량입니다. 거래량이 제공되지 않는 종목(달러인덱스, LME 비철금속, 두바이유 등)은 0입니다."
+     },
+     {
+      "name": "oprc",
+      "name_ko": "시가",
+      "type": "number",
+      "length": "12",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "당일 시가입니다."
+     },
+     {
+      "name": "hprc",
+      "name_ko": "고가",
+      "type": "number",
+      "length": "12",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "당일 고가입니다."
+     },
+     {
+      "name": "lprc",
+      "name_ko": "저가",
+      "type": "number",
+      "length": "12",
+      "required": true,
+      "location": "body",
+      "depth": 1,
+      "child": true,
+      "description": "당일 저가입니다."
+     },
+     {
+      "name": "rsp_cd",
+      "name_ko": "응답코드",
+      "type": "string",
+      "length": "5",
+      "required": true,
+      "location": "body",
+      "depth": 0,
+      "child": false,
+      "description": "응답 코드"
+     },
+     {
+      "name": "rsp_msg",
+      "name_ko": "응답메시지",
+      "type": "string",
+      "length": "200",
+      "required": true,
+      "location": "body",
+      "depth": 0,
+      "child": false,
+      "description": "응답 메시지"
+     },
+     {
+      "name": "tr_cont",
+      "name_ko": "연속조회여부",
+      "type": "string",
+      "length": "1",
+      "required": true,
+      "location": "body",
+      "depth": 0,
+      "child": false,
+      "description": "연속조회 여부"
+     }
+    ],
+    "containers": {
+     "data": {
+      "type": "array",
+      "name_ko": "목록"
+     }
+    }
+   },
+   "example": {
+    "request": "GET /market/v1/overseas/commodities/prices?mrkt_div_code=FN&iscd=COM@GC\nauthorization: Bearer {access_token}\nmac_address: {mac_address}",
+    "response": "{\n    \"data\": [\n        {\n            \"iscd\": \"COM@GC\",\n            \"mrkt_cls_code\": \"FN\",\n            \"isnm\": \"금 26-12\",\n            \"date\": \"20261021\",\n            \"prpr\": 4150.0,\n            \"prdy_vrss\": 7.4,\n            \"prdy_vrss_sign\": \"2\",\n            \"prdy_ctrt\": 0.17,\n            \"acml_vol\": 143504,\n            \"oprc\": 4143.4,\n            \"hprc\": 4160.6,\n            \"lprc\": 4122.3\n        }\n    ],\n    \"rsp_cd\": \"0000\",\n    \"rsp_msg\": \"정상 처리 되었습니다.\"\n}"
    }
   },
   {
